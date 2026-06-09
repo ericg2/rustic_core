@@ -1,3 +1,11 @@
+use aho_corasick::AhoCorasick;
+use bytes::Bytes;
+use derive_setters::Setters;
+use log::{debug, error, trace, warn};
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::{
     fmt::Debug,
     fs::{self, File, Metadata},
@@ -5,21 +13,23 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
-
-use aho_corasick::AhoCorasick;
-use bytes::Bytes;
-use log::{debug, error, trace, warn};
 use walkdir::WalkDir;
 
 use rustic_core::{
-    ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult,
-    WriteBackend,
+    ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, ReadBackend, RepositoryConfig,
+    RusticError, RusticResult, WriteBackend,
 };
 
-/// A local backend.
-#[derive(Clone, Debug)]
-pub struct LocalBackend {
+#[serde_as]
+#[cfg_attr(feature = "clap", derive(clap::Parser))]
+#[cfg_attr(feature = "merge", derive(conflate::Merge))]
+#[derive(Clone, Debug, Setters, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[setters(into)]
+#[non_exhaustive]
+pub struct LocalConfig {
     /// The base path of the backend.
+    #[setters(skip)]
     path: PathBuf,
     /// The command to call after a file was created.
     post_create_command: Option<String>,
@@ -27,47 +37,71 @@ pub struct LocalBackend {
     post_delete_command: Option<String>,
 }
 
-impl LocalBackend {
-    /// Create a new [`LocalBackend`]
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - The base path of the backend
-    /// * `options` - Additional options for the backend
-    ///
-    /// # Errors
-    ///
-    /// * If the directory could not be created.
-    ///
-    /// # Options
-    ///
-    /// * `post-create-command` - The command to call after a file was created.
-    /// * `post-delete-command` - The command to call after a file was deleted.
-    pub fn new(
-        path: impl AsRef<str>,
-        options: impl IntoIterator<Item = (String, String)>,
-    ) -> RusticResult<Self> {
-        let path = path.as_ref().into();
-        let mut post_create_command = None;
-        let mut post_delete_command = None;
-        for (option, value) in options {
-            match option.as_str() {
-                "post-create-command" => {
-                    post_create_command = Some(value);
-                }
-                "post-delete-command" => {
-                    post_delete_command = Some(value);
-                }
-                opt => {
-                    warn!("Option {opt} is not supported! Ignoring it.");
-                }
-            }
+impl LocalConfig {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
+            post_create_command: None,
+            post_delete_command: None,
         }
+    }
 
+    pub fn from_iter<K, V, I>(path: impl AsRef<str>, dict: I) -> RusticResult<Self>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let mut map: HashMap<String, String> = dict
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+
+        // inject path so serde can populate it
+        map.insert("path".to_string(), path.as_ref().to_string());
+
+        let config: Self = serde_json::to_value(map)
+            .and_then(serde_json::from_value)
+            .map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::Configuration,
+                    "Failed to deserialize OpenDAL config",
+                    err,
+                )
+            })?;
+
+        Ok(config)
+    }
+}
+
+impl RepositoryConfig for LocalConfig {
+    fn get_path(&self) -> String {
+        self.path.to_string_lossy().into_owned()
+    }
+
+    fn get_options(&self) -> HashMap<String, String> {
+        let mut ret = crate::struct_to_map(&self);
+        ret.remove("path");
+        ret
+    }
+
+    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
+        let ret = LocalBackend::new(&self)?;
+        Ok(Arc::new(ret))
+    }
+}
+
+/// A local backend.
+#[derive(Debug)]
+struct LocalBackend {
+    /// The base path of the backend.
+    config: LocalConfig,
+}
+
+impl LocalBackend {
+    pub(crate) fn new(config: &LocalConfig) -> RusticResult<Self> {
         Ok(Self {
-            path,
-            post_create_command,
-            post_delete_command,
+            config: config.clone()
         })
     }
 
@@ -83,10 +117,11 @@ impl LocalBackend {
     /// The base path of the file.
     fn base_path(&self, tpe: FileType, id: &Id) -> PathBuf {
         let hex_id = id.to_hex();
+        let path = self.config.path.clone();
         match tpe {
-            FileType::Config => self.path.clone(),
-            FileType::Pack => self.path.join("data").join(&hex_id[0..2]),
-            _ => self.path.join(tpe.dirname()),
+            FileType::Config => path,
+            FileType::Pack => path.join("data").join(&hex_id[0..2]),
+            _ => path.join(tpe.dirname()),
         }
     }
 
@@ -137,9 +172,7 @@ impl LocalBackend {
     /// * `%id` - The id of the file.
     fn call_command(tpe: FileType, id: &Id, filename: &Path, command: &str) -> RusticResult<()> {
         let id = id.to_hex();
-
         let patterns = &["%file", "%type", "%id"];
-
         let ac = AhoCorasick::new(patterns).map_err(|err| {
             RusticError::with_source(
                 ErrorKind::Internal,
@@ -150,9 +183,7 @@ impl LocalBackend {
         })?;
 
         let replace_with = &[filename.to_str().unwrap(), tpe.dirname(), id.as_str()];
-
         let actual_command = ac.replace_all(command, replace_with);
-
         debug!("calling {actual_command}...");
 
         let command: CommandInput = actual_command.parse().map_err(|err| {
@@ -199,47 +230,8 @@ impl ReadBackend for LocalBackend {
     /// This is `local:<path>`.
     fn location(&self) -> String {
         let mut location = "local:".to_string();
-        location.push_str(&self.path.to_string_lossy());
+        location.push_str(&self.config.path.to_string_lossy());
         location
-    }
-
-    /// Lists all files of the given type.
-    ///
-    /// # Arguments
-    ///
-    /// * `tpe` - The type of the files to list.
-    ///
-    /// # Notes
-    ///
-    /// If the file type is `FileType::Config`, this will return a list with a single default id.
-    fn list(&self, tpe: FileType) -> RusticResult<Vec<Id>> {
-        trace!("listing tpe: {tpe:?}");
-        if tpe == FileType::Config {
-            return Ok(if self.path.join("config").exists() {
-                vec![Id::default()]
-            } else {
-                Vec::new()
-            });
-        }
-
-        let walker = WalkDir::new(self.path.join(tpe.dirname()))
-            .into_iter()
-            .inspect(|r| {
-                if let Err(err) = r {
-                    error!("Error while listing files: {err:?}");
-                }
-            })
-            .filter_map(|r| {
-                let entry = r
-                    .inspect_err(|err| error!("error listing {tpe}: {err}"))
-                    .ok()?;
-                if !entry.file_type().is_file() {
-                    return None;
-                }
-                let name = entry.file_name().to_string_lossy();
-                Id::parse_some(&name, tpe)
-            });
-        Ok(walker.collect())
     }
 
     /// Lists all files with their size of the given type.
@@ -272,7 +264,7 @@ impl ReadBackend for LocalBackend {
         }
 
         trace!("listing tpe: {tpe:?}");
-        let path = self.path.join(tpe.dirname());
+        let path = self.config.path.join(tpe.dirname());
 
         if tpe == FileType::Config {
             if path.exists() {
@@ -293,10 +285,48 @@ impl ReadBackend for LocalBackend {
             let name = entry.file_name().to_string_lossy();
             let id = Id::parse_some(&name, tpe)?;
             let length = length(entry.metadata(), &name, tpe)?;
-
             Some((id, length))
         });
 
+        Ok(walker.collect())
+    }
+
+    /// Lists all files of the given type.
+    ///
+    /// # Arguments
+    ///
+    /// * `tpe` - The type of the files to list.
+    ///
+    /// # Notes
+    ///
+    /// If the file type is `FileType::Config`, this will return a list with a single default id.
+    fn list(&self, tpe: FileType) -> RusticResult<Vec<Id>> {
+        trace!("listing tpe: {tpe:?}");
+        if tpe == FileType::Config {
+            return Ok(if self.config.path.join("config").exists() {
+                vec![Id::default()]
+            } else {
+                Vec::new()
+            });
+        }
+
+        let walker = WalkDir::new(self.config.path.join(tpe.dirname()))
+            .into_iter()
+            .inspect(|r| {
+                if let Err(err) = r {
+                    error!("Error while listing files: {err:?}");
+                }
+            })
+            .filter_map(|r| {
+                let entry = r
+                    .inspect_err(|err| error!("error listing {tpe}: {err}"))
+                    .ok()?;
+                if !entry.file_type().is_file() {
+                    return None;
+                }
+                let name = entry.file_name().to_string_lossy();
+                Id::parse_some(&name, tpe)
+            });
         Ok(walker.collect())
     }
 
@@ -409,18 +439,18 @@ impl WriteBackend for LocalBackend {
     ///
     /// * If the directory could not be created.
     fn create(&self) -> RusticResult<()> {
-        trace!("creating repo at {}", self.path.display());
-        fs::create_dir_all(&self.path).map_err(|err| {
+        trace!("creating repo at {}", self.config.path.display());
+        fs::create_dir_all(&self.config.path).map_err(|err| {
             RusticError::with_source(
                 ErrorKind::InputOutput,
                 "Failed to create the directory `{path}`. Please check the path and try again.",
                 err,
             )
-            .attach_context("path", self.path.display().to_string())
+            .attach_context("path", self.config.path.display().to_string())
         })?;
 
         for tpe in ALL_FILE_TYPES {
-            let path = self.path.join(tpe.dirname());
+            let path = self.config.path.join(tpe.dirname());
             fs::create_dir_all(path.clone()).map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::InputOutput,
@@ -432,7 +462,7 @@ impl WriteBackend for LocalBackend {
         }
 
         for i in 0u8..=255 {
-            let path = self.path.join("data").join(hex::encode([i]));
+            let path = self.config.path.join("data").join(hex::encode([i]));
             fs::create_dir_all(path.clone()).map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::InputOutput,
@@ -565,7 +595,7 @@ impl WriteBackend for LocalBackend {
             .ask_report()
         })?;
 
-        if let Some(command) = &self.post_create_command
+        if let Some(command) = &self.config.post_create_command
             && let Err(err) = Self::call_command(tpe, id, &filename, command)
         {
             warn!("post-create: {}", err.display_log());
@@ -595,7 +625,7 @@ impl WriteBackend for LocalBackend {
             )
             .attach_context("path", filename.to_string_lossy())
         )?;
-        if let Some(command) = &self.post_delete_command
+        if let Some(command) = &self.config.post_delete_command
             && let Err(err) = Self::call_command(tpe, id, &filename, command)
         {
             warn!("post-delete: {}", err.display_log());

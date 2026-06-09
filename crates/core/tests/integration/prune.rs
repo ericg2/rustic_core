@@ -2,7 +2,7 @@ use anyhow::Result;
 use bytesize::ByteSize;
 use jiff::Span;
 use rstest::rstest;
-
+use rustic_backend::local::LocalSource;
 use rustic_core::{
     BackupOptions, CheckOptions, ConfigOptions, LimitOption, PathList, PruneOptions,
     repofile::{Chunker, SnapshotFile},
@@ -38,19 +38,20 @@ fn test_prune(
 
     // first backup
     let paths = PathList::from_iter(Some(source.0.path().join("0/0/9")));
-    let snapshot1 = repo.backup(&opts, &paths, SnapshotFile::default())?;
+    let src = LocalSource::new(&paths);
+    let snapshot1 = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // second backup
     let paths = PathList::from_iter(Some(source.0.path().join("0/0/9/2")));
-    let _ = repo.backup(&opts, &paths, SnapshotFile::default())?;
+    let _ = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // third backup
     let paths = PathList::from_iter(Some(source.0.path().join("0/0/9/3")));
-    let _ = repo.backup(&opts, &paths, SnapshotFile::default())?;
+    let _ = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // drop index
     let repo = repo.drop_index();

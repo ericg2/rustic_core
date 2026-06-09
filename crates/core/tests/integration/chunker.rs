@@ -4,7 +4,7 @@ use anyhow::Result;
 use bytesize::ByteSize;
 use insta::{Settings, assert_ron_snapshot};
 use rstest::rstest;
-
+use rustic_backend::local::LocalSource;
 use rustic_core::{
     BackupOptions, ConfigOptions,
     repofile::{Chunker, SnapshotFile},
@@ -34,8 +34,9 @@ fn test_chunker_params(
     assert!(repo.apply_config(&config_opts)?);
 
     // we use as_path to not depend on the actual tempdir
+    let src = LocalSource::new(paths);
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
-    let snapshot = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // We can also bind to scope ( https://docs.rs/insta/latest/insta/struct.Settings.html#method.bind_to_scope )
     // But I think that can get messy with a lot of tests, also checking which settings are currently applied

@@ -4,11 +4,8 @@ use std::{path::PathBuf, str::FromStr};
 use anyhow::Result;
 use insta::Settings;
 use rstest::rstest;
-
-use rustic_core::{
-    BackupOptions, LsOptions, RusticResult,
-    repofile::{Metadata, Node, SnapshotFile},
-};
+use rustic_backend::local::LocalSource;
+use rustic_core::{BackupOptions, LsOptions, RusticResult, repofile::{Metadata, Node, SnapshotFile}, Excludes};
 
 use super::{
     RepoOpen, TestSource, assert_with_win, insta_node_redaction, set_up_repo, tar_gz_testdata,
@@ -26,8 +23,9 @@ fn test_ls(
 
     // we use as_path to not depend on the actual tempdir
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
+    let src = LocalSource::new(paths);
     // backup test-data
-    let snapshot = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // test non-existing entries
     let mut node = Node::new_node(

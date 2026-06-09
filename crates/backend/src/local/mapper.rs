@@ -10,17 +10,13 @@ use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
-use super::{IgnoreErrorKind, IgnoreResult, OpenFile};
-use crate::backend::{
-    ReadSourceEntry,
-    node::{
-        ExtendedAttribute, Metadata, Node, NodeType,
-        modification::{DevIdOption, TimeOption, XattrOption},
-    },
-};
+use crate::local::local_src::{IgnoreErrorKind, IgnoreResult, LocalFile};
+
 
 #[cfg(not(windows))]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
+use std::path::PathBuf;
+use rustic_core::{TimeOption, DevIdOption, XattrOption, ReadSourceEntry, Metadata, Node, NodeType, ExtendedAttribute};
 
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -38,8 +34,8 @@ pub enum BlockdevOption {
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 #[setters(into)]
 #[non_exhaustive]
-/// [`LocalSourceSaveOptions`] describes how entries from a local source will be saved in the repository.
-pub struct LocalSourceSaveOptions {
+/// [`LocalSaveOptions`] describes how entries from a local source will be saved in the repository.
+pub struct LocalSaveOptions {
     /// Set access time [default: mtime]
     #[cfg_attr(feature = "clap", clap(long))]
     #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
@@ -66,7 +62,17 @@ pub struct LocalSourceSaveOptions {
     pub set_xattrs: Option<XattrOption>,
 }
 
-impl LocalSourceSaveOptions {
+fn strip_roots(path: &Path, roots: &Vec<PathBuf>) -> PathBuf {
+    for root in roots {
+        if let Ok(stripped) = path.strip_prefix(root) {
+            return PathBuf::from("/").join(stripped);
+        }
+    }
+
+    path.to_path_buf()
+}
+
+impl LocalSaveOptions {
     /// Maps a [`DirEntry`] to a [`ReadSourceEntry`].
     ///
     /// # Arguments
@@ -78,7 +84,7 @@ impl LocalSourceSaveOptions {
     ///
     /// * If metadata could not be read.
     /// * If the xattr of the entry could not be read.
-    pub fn map_entry(self, entry: DirEntry) -> IgnoreResult<ReadSourceEntry<OpenFile>> {
+    pub fn map_entry(self, roots: &Vec<PathBuf>, entry: DirEntry) -> IgnoreResult<ReadSourceEntry<LocalFile>> {
         let name = entry.file_name();
         let m = entry
             .metadata()
@@ -130,9 +136,10 @@ impl LocalSourceSaveOptions {
         };
 
         let node = self.to_node(&entry, &m, meta)?;
-        let path = entry.into_path();
-        let open = Some(OpenFile(path.clone()));
-        Ok(ReadSourceEntry { path, node, open })
+        let abs_path = entry.into_path();
+        let rel_path = strip_roots(&abs_path, roots);
+        let open = Some(LocalFile(abs_path.clone()));
+        Ok(ReadSourceEntry { path: rel_path, node, open })
     }
 
     fn to_node(
@@ -160,7 +167,7 @@ impl LocalSourceSaveOptions {
 }
 
 #[cfg(not(windows))]
-impl LocalSourceSaveOptions {
+impl LocalSaveOptions {
     fn ctime(m: &std::fs::Metadata) -> Option<Timestamp> {
         #[allow(clippy::cast_possible_truncation)]
         Timestamp::new(m.ctime(), m.ctime_nsec() as i32).ok()
@@ -247,7 +254,7 @@ impl LocalSourceSaveOptions {
 }
 
 #[cfg(windows)]
-impl LocalSourceSaveOptions {
+impl LocalSaveOptions {
     fn ctime(m: &std::fs::Metadata) -> Option<Timestamp> {
         m.created().ok().and_then(|t| Timestamp::try_from(t).ok())
     }

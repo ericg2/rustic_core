@@ -2,7 +2,7 @@ use std::{path::PathBuf, str::FromStr};
 
 use anyhow::Result;
 use rstest::rstest;
-
+use rustic_backend::local::LocalSource;
 use rustic_core::{BackupOptions, ConfigOptions, PruneOptions, repofile::SnapshotFile};
 
 use super::{RepoOpen, TestSource, set_up_repo, tar_gz_testdata};
@@ -26,7 +26,8 @@ fn test_append_only(
 
     // backup should still work
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
-    let snap = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let src = LocalSource::new(paths);
+    let snap = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // deleting snapshots should fail
     assert!(repo.delete_snapshots(&[snap.id]).is_err());

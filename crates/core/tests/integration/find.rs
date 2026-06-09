@@ -6,7 +6,7 @@ use std::{
 use anyhow::Result;
 use globset::Glob;
 use rstest::rstest;
-
+use rustic_backend::local::LocalSource;
 use rustic_core::{
     BackupOptions, FindMatches, FindNode,
     repofile::{Node, SnapshotFile},
@@ -21,9 +21,10 @@ fn test_find(tar_gz_testdata: Result<TestSource>, set_up_repo: Result<RepoOpen>)
     let paths = &source.path_list();
 
     // we use as_path to not depend on the actual tempdir
+    let src = LocalSource::new(paths);
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
     // backup test-data
-    let snapshot = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;

@@ -1,10 +1,10 @@
 //! `backup` example
 use rustic_backend::BackendOptions;
-use rustic_core::{
-    BackupOptions, Credentials, PathList, Repository, RepositoryOptions, SnapshotOptions,
-};
+use rustic_core::{BackupOptions, Credentials, Excludes, FilterOptions, PathList, Repository, RepositoryOptions, SnapshotOptions};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
+use std::path::Path;
+use rustic_backend::local::{LocalSaveOptions, LocalSource};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Display info logs
@@ -23,8 +23,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .open(&credentials)?
         .to_indexed_ids()?;
 
+    let paths = PathList::from_string("/")?;
     let backup_opts = BackupOptions::default();
-    let source = PathList::from_string(".")?.sanitize()?;
+    let source = LocalSource::new(paths);
     let snap = SnapshotOptions::default()
         .add_tags("tag1,tag2")?
         .to_snapshot()?;

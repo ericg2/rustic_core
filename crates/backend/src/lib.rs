@@ -55,11 +55,7 @@ This crate exposes a few features for controlling dependency usage:
 // formatting args are used for error messages
 #![allow(clippy::literal_string_with_formatting_args)]
 
-pub mod choose;
-/// Local backend for Rustic.
 pub mod local;
-/// Utility functions for the backend.
-pub mod util;
 
 /// `OpenDAL` backend for Rustic.
 #[cfg(feature = "opendal")]
@@ -73,20 +69,70 @@ pub mod rclone;
 #[cfg(feature = "rest")]
 pub mod rest;
 
-#[cfg(feature = "opendal")]
-pub use crate::opendal::OpenDALBackend;
+pub mod stdin;
+pub mod stdout;
 
-#[cfg(feature = "rclone")]
-pub use crate::rclone::RcloneBackend;
+mod choose;
+mod filter;
+mod retry;
+mod util;
 
-#[cfg(feature = "rest")]
-pub use crate::rest::RestBackend;
-
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
+use serde::Serialize;
+use serde_json::Value;
 // rustic_backend Public API
-pub use crate::{
-    choose::{BackendOptions, SupportedBackend},
-    local::LocalBackend,
-};
+pub use crate::choose::{BackendOptions, SupportedBackend};
 
 // re-export for error handling
 pub use rustic_core::{ErrorKind, RusticError, RusticResult, Severity, Status};
+
+pub(crate) fn struct_to_map<T: Serialize>(value: &T) -> HashMap<String, String> {
+    let v = serde_json::to_value(value).unwrap();
+    let obj = v.as_object().expect("expected struct");
+    obj.iter()
+        .map(|(k, v)| {
+            let val = match v {
+                Value::String(s) => s.clone(),
+                other => other.to_string().trim_matches('"').to_string(),
+            };
+            (k.clone(), val)
+        })
+        .collect()
+}
+
+pub(crate) fn join_force(base: impl AsRef<Path>, p: impl AsRef<Path>) -> PathBuf {
+    let mut out = PathBuf::from(base.as_ref());
+    for comp in p.as_ref().components() {
+        match comp {
+            Component::Prefix(_) => {} // skip drive letters / UNC prefix
+            Component::RootDir => {}   // skip leading /
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// Converts a [`Path`] into an OpenDAL-supported [`String`].
+///
+/// # Arguments
+/// * `base` - The root [`Path`] to use.
+/// * `p` - The [`Path`] to convert from.
+/// * `is_dir` - If representing a directory or file.
+///
+/// # Returns
+/// A valid [`String`] for OpenDAL use.
+pub(crate) fn path_to_str(base: impl AsRef<Path>, p: impl AsRef<Path>, is_dir: bool) -> String {
+    let p = crate::join_force(base, p);
+    let mut r: String = p.to_string_lossy().to_string();
+    if !r.starts_with("/") {
+        r = format!("/{r}")
+    }
+    if is_dir && !r.ends_with("/") {
+        r += "/"
+    } else if !is_dir && r.ends_with("/") {
+        r = r.strip_suffix("/").unwrap_or(&r).to_string()
+    }
+    r.replace("\\", "/") // *** fix for windows-style directories
+}
+

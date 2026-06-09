@@ -40,7 +40,7 @@ impl Excludes {
         self == &Self::default()
     }
 
-    pub(crate) fn as_override(&self) -> RusticResult<Override> {
+    pub fn as_override(&self) -> RusticResult<Override> {
         let mut override_builder = OverrideBuilder::new("");
         for g in &self.globs {
             _ = override_builder.add(g).map_err(|err| {

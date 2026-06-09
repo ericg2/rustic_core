@@ -3,7 +3,7 @@ use std::{path::PathBuf, str::FromStr, sync::Arc};
 use anyhow::Result;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
-
+use rustic_backend::local::LocalSource;
 use rustic_core::{
     BackupOptions, CheckOptions, ConfigOptions, Credentials, FileType, KeyOptions, ReadBackend,
     Repository, RepositoryBackends, RepositoryOptions, WriteBackend, repofile::SnapshotFile,
@@ -36,7 +36,8 @@ fn hot_cold(tar_gz_testdata: Result<TestSource>) -> Result<()> {
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
 
     // backup
-    let snapshot = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let src = LocalSource::new(paths);
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // get all snapshots and check them
     let all_snapshots = repo.get_all_snapshots()?;

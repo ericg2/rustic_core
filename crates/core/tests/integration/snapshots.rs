@@ -10,6 +10,7 @@ use anyhow::Result;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use rstest::{fixture, rstest};
+use rustic_backend::local::LocalSource;
 use rustic_core::repofile::SnapshotFile;
 use rustic_core::{BackupOptions, Grouped, IndexedIdsStatus, Repository, SnapshotGroupCriterion};
 
@@ -34,11 +35,12 @@ fn repo_and_snapshots() -> (Repository<IndexedIdsStatus>, Vec<SnapshotFile>) {
 
     // we use as_path to not depend on the actual tempdir
     let backup_options = BackupOptions::default().as_path(PathBuf::from_str("test").unwrap());
+    let src = LocalSource::new(&source.path_list());
     for snap_ts in snapshot_timestamp {
         let snapshot_file = repo
             .backup(
                 &backup_options,
-                &source.path_list(),
+                &src,
                 SnapshotFile {
                     time: snap_ts,
                     ..Default::default()

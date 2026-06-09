@@ -51,7 +51,7 @@ use insta::{
     internals::{Content, ContentPath},
 };
 use rstest::fixture;
-use rustic_backend::LocalBackend;
+use rustic_backend::local::LocalConfig;
 use serde::Serialize;
 use tar::Archive;
 use tempfile::{TempDir, tempdir};
@@ -60,8 +60,8 @@ use tempfile::{TempDir, tempdir};
 
 use rustic_core::{
     CommandInput, ConfigOptions, CredentialOptions, Credentials, IndexedFull, IndexedFullStatus,
-    KeyOptions, OpenStatus, PathList, Repository, RepositoryBackends, RepositoryOptions,
-    repofile::MasterKey,
+    KeyOptions, OpenStatus, PathList, Repository, RepositoryBackends, RepositoryConfig,
+    RepositoryOptions, repofile::MasterKey,
 };
 use rustic_testing::backend::in_memory_backend::InMemoryBackend;
 
@@ -107,7 +107,7 @@ fn repo_from_fixture(dir: &TempDir, repo_file: &str) -> Result<RepoOpen> {
     let mut archive = Archive::new(tar);
     archive.unpack(dir)?;
 
-    let be = LocalBackend::new(dir.path().join("repo").to_str().unwrap(), None)?;
+    let be = LocalConfig::new(dir.path().join("repo").to_str().unwrap()).get_repo()?;
     let be = RepositoryBackends::new(Arc::new(be), None);
     let options = RepositoryOptions::default();
     let repo = Repository::new(&options, &be)?.open(&Credentials::password("geheim"))?;

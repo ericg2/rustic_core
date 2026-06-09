@@ -5,17 +5,21 @@ use jiff::Timestamp;
 use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
-use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Mutex};
-
+use dashmap::DashSet;
 use itertools::Itertools;
 use rayon::ThreadPoolBuilder;
+use std::collections::HashSet;
+use std::io::Cursor;
+use std::path::Path;
+use std::sync::Condvar;
+use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Mutex};
 use walkdir::{DirEntry, WalkDir};
 
 use crate::{
+    Destination, ReadSource, ReadSourceEntry, ReadFileOpen,
     backend::{
         FileType, ReadBackend,
         decrypt::DecryptReadBackend,
-        local_destination::LocalDestination,
         node::{Node, NodeType},
     },
     blob::{BlobLocation, BlobLocations},
@@ -115,7 +119,7 @@ pub(crate) fn restore_repository<S: IndexedTree>(
     repo: &Repository<S>,
     opts: RestoreOptions,
     node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
-    dest: &LocalDestination,
+    dest: &impl Destination,
 ) -> RusticResult<()> {
     repo.warm_up_wait(file_infos.to_packs().into_iter())?;
     restore_contents(
@@ -153,39 +157,55 @@ pub(crate) fn restore_repository<S: IndexedTree>(
 /// * If a directory could not be created.
 /// * If the restore information could not be collected.
 #[allow(clippy::too_many_lines)]
-pub(crate) fn collect_and_prepare<S: IndexedFull>(
+pub(crate) fn collect_and_prepare<S, D, N, W, O>(
     repo: &Repository<S>,
     opts: RestoreOptions,
-    mut node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
-    dest: &LocalDestination,
+    mut node_streamer: N,
+    mut walker: W,
+    dest: &D,
     dry_run: bool,
-) -> RusticResult<RestorePlan> {
+) -> RusticResult<RestorePlan>
+where
+    S: IndexedFull,
+    D: Destination,
+    N: Iterator<Item = RusticResult<(PathBuf, Node)>>,
+    W: Iterator<Item = RusticResult<ReadSourceEntry<O>>>,
+    O: ReadFileOpen,
+{
     let p = repo.progress_spinner("collecting file information...");
-    let dest_path = dest.path("");
+    let dest_path = dest.path(Path::new(""));
 
     let mut stats = RestoreStats::default();
     let mut restore_infos = RestorePlan::default();
     let mut additional_existing = false;
+    let skip_dirs = DashSet::<PathBuf>::new();
 
-    let next_entry = |walker: &mut walkdir::IntoIter| -> Option<DirEntry> {
+    let next_entry = |walker: &mut W| -> Option<ReadSourceEntry<O>> {
         walker
             .inspect(|r| {
                 if let Err(err) = r {
                     error!("Error during collection of files: {err:?}");
                 }
             })
-            .find_map(Result::ok)
+            .find_map(|x| {
+                if let Some(ret) = x.ok() {
+                    if !skip_dirs.iter().any(|x| ret.path.starts_with(x.key())) {
+                        return Some(ret);
+                    }
+                }
+                None
+            })
     };
 
     let mut process_existing =
-        |walker: &mut walkdir::IntoIter, entry: &DirEntry| -> RusticResult<Option<DirEntry>> {
-            if entry.depth() == 0 {
+        |walker: &mut W, entry: &ReadSourceEntry<O>| -> RusticResult<Option<ReadSourceEntry<O>>> {
+            if entry.path == dest_path {
                 // don't process the root dir which should be existing
                 return Ok(next_entry(walker));
             }
 
-            debug!("additional {}", entry.path().display());
-            let is_dir = entry.file_type().is_dir();
+            debug!("additional {}", entry.path.display());
+            let is_dir = entry.node.is_dir();
             if is_dir {
                 stats.dirs.additional += 1;
             } else {
@@ -195,23 +215,23 @@ pub(crate) fn collect_and_prepare<S: IndexedFull>(
                 (true, true, true) => {
                     info!(
                         "would have removed the additional dir: {}",
-                        entry.path().display()
+                        entry.path.display()
                     );
                 }
                 (true, true, false) => {
                     info!(
                         "would have removed the additional file: {}",
-                        entry.path().display()
+                        entry.path.display()
                     );
                 }
                 (true, false, true) => {
-                    if let Err(err) = dest.remove_dir(entry.path()) {
-                        error!("error removing {}: {err}", entry.path().display());
+                    if let Err(err) = dest.remove_dir(&entry.path) {
+                        error!("error removing {}: {err}", entry.path.display());
                     }
                 }
                 (true, false, false) => {
-                    if let Err(err) = dest.remove_file(entry.path()) {
-                        error!("error removing {}: {err}", entry.path().display());
+                    if let Err(err) = dest.remove_file(&entry.path) {
+                        error!("error removing {}: {err}", entry.path.display());
                     }
                 }
                 (false, _, _) => {
@@ -221,7 +241,8 @@ pub(crate) fn collect_and_prepare<S: IndexedFull>(
 
             // don't descend into extra dirs
             if is_dir {
-                walker.skip_current_dir();
+                skip_dirs.insert(entry.path.clone());
+                //walker.skip_current_dir();
             }
             Ok(next_entry(walker))
         };
@@ -236,14 +257,14 @@ pub(crate) fn collect_and_prepare<S: IndexedFull>(
                     stats.dirs.restore += 1;
                     debug!("to restore: {}", path.display());
                     if !dry_run {
-                        dest.create_dir(path)
+                        dest.create_dir_all(path)
                             .map_err(|err| {
                                 RusticError::with_source(
                                     ErrorKind::InputOutput,
                                     "Failed to create the directory `{path}`. Please check the path and try again.",
-                                    err
+                                    err,
                                 )
-                                .attach_context("path", path.display().to_string())
+                                    .attach_context("path", path.display().to_string())
                             })?;
                     }
                 }
@@ -290,15 +311,8 @@ pub(crate) fn collect_and_prepare<S: IndexedFull>(
         Ok(())
     };
 
-    let mut walker = WalkDir::new(&dest_path)
-        .follow_links(false)
-        .sort_by_file_name()
-        .into_iter();
-
     let mut next_dst = next_entry(&mut walker);
-
     let mut next_node = node_streamer.next().transpose()?;
-
     loop {
         match (&next_dst, &next_node) {
             (None, None) => break,
@@ -307,14 +321,14 @@ pub(crate) fn collect_and_prepare<S: IndexedFull>(
                 next_dst = process_existing(&mut walker, destination)?;
             }
             (Some(destination), Some((path, node))) => {
-                match destination.path().cmp(&dest.path(path)) {
+                match destination.path.cmp(&dest.path(path)) {
                     Ordering::Less => {
                         next_dst = process_existing(&mut walker, destination)?;
                     }
                     Ordering::Equal => {
                         // process existing node
-                        if (node.is_dir() && !destination.file_type().is_dir())
-                            || (node.is_file() && !destination.file_type().is_file())
+                        if (node.is_dir() && !destination.node.is_dir())
+                            || (node.is_file() && !destination.node.is_file())
                             || node.is_special()
                         {
                             // if types do not match, first remove the existing file
@@ -363,29 +377,31 @@ fn restore_metadata(
     mut node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
     hardlink_candidates: &BTreeMap<HardlinkKey, PathBuf>,
     opts: RestoreOptions,
-    dest: &LocalDestination,
+    dest: &impl Destination,
 ) -> RusticResult<()> {
-    let mut dir_stack = Vec::new();
+    let mut dir_stack: Vec<(PathBuf, Node)> = Vec::new();
     while let Some((path, node)) = node_streamer.next().transpose()? {
-        // Create hardlink directly, if this is one.
-        if let Some(key) = hardlink_key(&node)
-            && let Some(canonical) = hardlink_candidates.get(&key)
-            && canonical != &path
-        {
-            debug!(
-                "restoring hardlink {} -> {}",
-                path.display(),
-                canonical.display()
-            );
-            dest.hard_link(canonical, &path).map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::InputOutput,
-                    "Failed to recreate the hardlink `{path}` from `{canonical}`.",
-                    err,
-                )
-                .attach_context("path", path.display().to_string())
-                .attach_context("canonical", canonical.display().to_string())
-            })?;
+        if dest.can_hard_link() {
+            // Create hardlink directly, if this is one.
+            if let Some(key) = hardlink_key(&node)
+                && let Some(canonical) = hardlink_candidates.get(&key)
+                && canonical != &path
+            {
+                debug!(
+                    "restoring hardlink {} -> {}",
+                    path.display(),
+                    canonical.display()
+                );
+                dest.hard_link(canonical, &path).map_err(|err| {
+                    RusticError::with_source(
+                        ErrorKind::InputOutput,
+                        "Failed to recreate the hardlink `{path}` from `{canonical}`.",
+                        err,
+                    )
+                    .attach_context("path", path.display().to_string())
+                    .attach_context("canonical", canonical.display().to_string())
+                })?;
+            }
         }
 
         match node.node_type {
@@ -396,18 +412,18 @@ fn restore_metadata(
                         break;
                     }
                     let (path, node) = dir_stack.pop().unwrap();
-                    set_metadata(dest, opts, &path, &node);
+                    dest.set_restore_metadata(&path, &node, &opts)?;
                 }
                 // push current path to the stack
                 dir_stack.push((path, node));
             }
-            _ => set_metadata(dest, opts, &path, &node),
+            _ => dest.set_restore_metadata(&path, &node, &opts)?,
         }
     }
 
     // empty dir stack and set metadata
     for (path, node) in dir_stack.into_iter().rev() {
-        set_metadata(dest, opts, &path, &node);
+        dest.set_restore_metadata(&path, &node, &opts)?;
     }
 
     Ok(())
@@ -424,50 +440,6 @@ fn hardlink_key(node: &Node) -> Option<HardlinkKey> {
         })
 }
 
-/// Set the metadata of the given file or directory.
-///
-/// # Arguments
-///
-/// * `dest` - The destination to restore to
-/// * `opts` - The restore options to use
-/// * `path` - The path of the file or directory
-/// * `node` - The node information of the file or directory
-///
-/// # Errors
-///
-/// If the metadata could not be set.
-// TODO: Return a result here, introduce errors and get rid of logging.
-pub(crate) fn set_metadata(
-    dest: &LocalDestination,
-    opts: RestoreOptions,
-    path: &PathBuf,
-    node: &Node,
-) {
-    debug!("setting metadata for {}", path.display());
-    dest.create_special(path, node)
-        .unwrap_or_else(|_| warn!("restore {}: creating special file failed.", path.display()));
-    match (opts.no_ownership, opts.numeric_id) {
-        (true, _) => {}
-        (false, true) => dest
-            .set_uid_gid(path, &node.meta)
-            .unwrap_or_else(|_| warn!("restore {}: setting UID/GID failed.", path.display())),
-        (false, false) => dest
-            .set_user_group(path, &node.meta)
-            .unwrap_or_else(|_| warn!("restore {}: setting User/Group failed.", path.display())),
-    }
-    dest.set_permission(path, node)
-        .unwrap_or_else(|_| warn!("restore {}: chmod failed.", path.display()));
-    dest.set_extended_attributes(path, &node.meta.extended_attributes)
-        .unwrap_or_else(|_| {
-            warn!(
-                "restore {}: setting extended attributes failed.",
-                path.display()
-            );
-        });
-    dest.set_times(path, &node.meta)
-        .unwrap_or_else(|_| warn!("restore {}: setting file times failed.", path.display()));
-}
-
 struct PackInfo {
     pack_id: PackId,
     from_file: Option<(usize, u64, u32)>,
@@ -479,9 +451,9 @@ impl PackInfo {
     /// coalesce two `PackInfo` if possible
     fn coalesce(self, other: Self) -> Result<Self, (Self, Self)> {
         if self.pack_id == other.pack_id // if the pack is identical
-           && self.from_file.is_none() // and we don't read from a present file
-           // and the blobs can be coalesced
-           && self.locations.can_coalesce(&other.locations)
+            && self.from_file.is_none() // and we don't read from a present file
+            // and the blobs can be coalesced
+            && self.locations.can_coalesce(&other.locations)
         {
             Ok(Self {
                 pack_id: self.pack_id,
@@ -493,52 +465,51 @@ impl PackInfo {
         }
     }
 }
-
-/// [`restore_contents`] restores all files contents as described by `file_infos`
-/// using the [`DecryptReadBackend`] `be` and writing them into the [`LocalDestination`] `dest`.
-///
-/// # Type Parameters
-///
-/// * `P` - The progress bar type.
-/// * `S` - The state the repository is in.
-///
-/// # Arguments
-///
-/// * `repo` - The repository to restore.
-/// * `dest` - The destination to restore to.
-/// * `file_infos` - The restore information.
-///
-/// # Errors
-///
-/// * If the length of a file could not be set.
-/// * If the restore failed.
 #[allow(clippy::too_many_lines)]
 fn restore_contents<S: Open>(
     repo: &Repository<S>,
-    dest: &LocalDestination,
+    dest: &impl Destination,
     filenames: &Filenames,
     file_lengths: Vec<u64>,
     restore_info: RestoreInfo,
     restore_size: u64,
 ) -> RusticResult<()> {
     let be = repo.dbe();
+    let num_files = file_lengths.len();
 
-    // first create needed empty files, as they are not created later.
+    // For random-write: create empty files now, non-empty files are lazily
+    // allocated on first write via the sizes mutex.
+    // For append: truncate ALL files to 0 now so appends start from a clean
+    // slate (no stale content, no pre-allocated zeros that would cause
+    // over-length output).
     for (i, size) in file_lengths.iter().enumerate() {
-        if *size == 0 {
+        if *size == 0 || !dest.can_random_write() {
             let path = &filenames[i];
-            dest.set_length(path, *size).map_err(|err| {
+            if let Some(parent) = path.parent() {
+                dest.create_dir_all(parent)?;
+            }
+            dest.set_length(path, 0).map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::InputOutput,
                     "Failed to set the length of the file `{path}`. Please check the path and try again.",
                     err,
                 )
-                .attach_context("path", path.display().to_string())
+                    .attach_context("path", path.display().to_string())
             })?;
         }
     }
 
+    // Random-write path: tracks which files still need to be allocated
+    // (set to their full size) before the first write_at.
     let sizes = &Mutex::new(file_lengths);
+
+    // Append path: per-file cursor + condvar so that concurrent threads
+    // always append in offset order. Data waits on the calling thread's
+    // stack — nothing is heap-buffered while blocking.
+    let write_cursors: Vec<(Mutex<u64>, Condvar)> = (0..num_files)
+        .map(|_| (Mutex::new(0u64), Condvar::new()))
+        .collect();
+    let write_cursors = &write_cursors;
 
     let p = repo.progress_bytes("restoring file contents...");
     p.set_length(restore_size);
@@ -568,7 +539,6 @@ fn restore_contents<S: Open>(
         .collect();
 
     let threads = constants::MAX_READER_THREADS_NUM;
-
     let pool = ThreadPoolBuilder::new()
         .num_threads(threads)
         .build()
@@ -586,35 +556,35 @@ fn restore_contents<S: Open>(
             pack_id,
             from_file,
             locations:
-                BlobLocations {
-                    offset,
-                    length,
-                    blobs,
-                },
+            BlobLocations {
+                offset,
+                length,
+                blobs,
+            },
         } in packs
         {
             let p = &p;
-
             if !blobs.is_empty() {
                 // TODO: error handling!
                 s.spawn(move |s1| {
-                    let read_data = match &from_file {
-                        Some((file_idx, offset_file, length_file)) => {
-                            // read from existing file
-                            dest.read_at(&filenames[*file_idx], *offset_file, (*length_file).into())
-                                .unwrap()
-                        }
-                        None => {
-                            // read needed part of the pack
-                            be.read_partial(FileType::Pack, &pack_id, false, offset, length)
-                                .unwrap()
-                        }
+                    let read_data = match (dest.can_random_write(), &from_file) {
+                        (true, Some((file_idx, offset_file, length_file))) => dest
+                            .read_exact(
+                                &filenames[*file_idx],
+                                *offset_file,
+                                (*length_file).into(),
+                            )
+                            .unwrap(),
+
+                        _ => be
+                            .read_partial(FileType::Pack, &pack_id, false, offset, length)
+                            .unwrap(),
                     };
 
                     // save into needed files in parallel
                     for (bl, name_dests) in blobs {
                         let size = bl.data_length().into();
-                        let data = if from_file.is_some() {
+                        let data = if dest.can_random_write() && from_file.is_some() {
                             read_data.clone()
                         } else {
                             let start = usize::try_from(bl.offset - offset)
@@ -625,21 +595,44 @@ fn restore_contents<S: Open>(
                                 &read_data[start..end],
                                 bl.uncompressed_length,
                             )
-                            .unwrap()
+                                .unwrap()
                         };
                         for (file_idx, start) in name_dests {
                             let data = data.clone();
                             s1.spawn(move |_| {
                                 let path = &filenames[file_idx];
-                                // Allocate file if it is not yet allocated
-                                let mut sizes_guard = sizes.lock().unwrap();
-                                let filesize = sizes_guard[file_idx];
-                                if filesize > 0 {
-                                    dest.set_length(path, filesize).unwrap();
-                                    sizes_guard[file_idx] = 0;
+                                if dest.can_random_write() {
+                                    // Allocate file if it is not yet allocated
+                                    let mut sizes_guard = sizes.lock().unwrap();
+                                    let filesize = sizes_guard[file_idx];
+                                    if filesize > 0 {
+                                        if let Some(parent) = path.parent() {
+                                            dest.create_dir_all(parent).unwrap();
+                                        }
+                                        dest.set_length(path, filesize).unwrap();
+                                        sizes_guard[file_idx] = 0;
+                                    }
+                                    drop(sizes_guard);
+                                    dest.write_at(path, start, &data).unwrap();
+                                } else {
+                                    // Block until it is our turn to append, so writes
+                                    // are contiguous. Data waits on this thread's stack.
+                                    let (cursor_mutex, condvar) = &write_cursors[file_idx];
+                                    let mut cursor = condvar
+                                        .wait_while(
+                                            cursor_mutex.lock().unwrap(),
+                                            |c| *c != start,
+                                        )
+                                        .unwrap();
+                                    assert_eq!(
+                                        *cursor, start,
+                                        "non-contiguous write to {path:?}: expected offset {}, got {start}",
+                                        *cursor,
+                                    );
+                                    dest.append(path, &data).unwrap();
+                                    *cursor += data.len() as u64;
+                                    condvar.notify_all();
                                 }
-                                drop(sizes_guard);
-                                dest.write_at(path, start, &data).unwrap();
                                 p.inc(size);
                             });
                         }
@@ -721,62 +714,37 @@ impl RestorePlan {
     /// * If the file could not be added.
     fn add_file<S: IndexedFull>(
         &mut self,
-        dest: &LocalDestination,
+        dest: &impl Destination,
         file: &Node,
         name: PathBuf,
         repo: &Repository<S>,
         ignore_mtime: bool,
     ) -> RusticResult<AddFileResult> {
-        let mut open_file = dest.get_matching_file(&name, file.meta.size);
+        let existing_file = dest
+            .get_existing(&name)?
+            .filter(|meta| meta.size == file.meta.size);
 
         // Empty files which exists with correct size should always return Ok(Existing)!
-        if file.meta.size == 0
-            && let Some(meta) = open_file
-                .as_ref()
-                .map(std::fs::File::metadata)
-                .transpose()
-                .map_err(|err|
-                    RusticError::with_source(
-                        ErrorKind::InputOutput,
-                        "Failed to get the metadata of the file `{path}`. Please check the path and try again.",
-                        err
-                    )
-                    .attach_context("path", name.display().to_string())
-                )?
-                && meta.len() == 0 {
-                    // Empty file exists
-                    return Ok(AddFileResult::Existing);
-                }
+        if file.meta.size == 0 && existing_file.is_some() {
+            return Ok(AddFileResult::Existing);
+        }
 
-        if !ignore_mtime
-            && let Some(meta) = open_file
-                .as_ref()
-                .map(std::fs::File::metadata)
-                .transpose()
-                .map_err(|err|
-                    RusticError::with_source(
-                        ErrorKind::InputOutput,
-                        "Failed to get the metadata of the file `{path}`. Please check the path and try again.",
-                        err
-                    )
-                    .attach_context("path", name.display().to_string())
-                )?
-            {
-                // TODO: This is the same logic as in backend/ignore.rs => consolidate!
-                let mtime = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| Timestamp::try_from(t).ok());
-                if meta.len() == file.meta.size && mtime == file.meta.mtime {
+        if !ignore_mtime {
+            if let Some(ref meta) = existing_file {
+                if meta.size == file.meta.size && meta.mtime == file.meta.mtime {
                     // File exists with fitting mtime => we suspect this file is ok!
-                    debug!("file {} exists with suitable size and mtime, accepting it!",name.display());
+                    debug!(
+                        "file {} exists with suitable size and mtime, accepting it!",
+                        name.display()
+                    );
                     self.matched_size += file.meta.size;
                     return Ok(AddFileResult::Existing);
                 }
             }
+        }
 
         let file_idx = self.names.len();
-        self.names.push(name);
+        self.names.push(name.clone());
         let mut file_pos = 0;
         let mut has_unmatched = false;
         for id in file.content.iter().flatten() {
@@ -784,10 +752,7 @@ impl RestorePlan {
             let bl = ie.location;
             let length: u64 = bl.data_length().into();
 
-            let matches = open_file
-                .as_mut()
-                .is_some_and(|file| id.blob_matches_reader(length, file));
-
+            let mut matches = false;
             let blob_location = self.r.entry((ie.pack, bl)).or_default();
             blob_location.push(FileLocation {
                 file_idx,
@@ -795,19 +760,25 @@ impl RestorePlan {
                 matches,
             });
 
-            if matches {
-                self.matched_size += length;
-            } else {
-                self.restore_size += length;
+            // We can skip reading from `dest` as soon as we know the file is different.
+            let should_read = !has_unmatched || dest.can_random_write();
+            if should_read && existing_file.is_some() {
+                let mut data = Cursor::new(dest.read_exact(&name, file_pos, length)?);
+                matches = id.blob_matches_reader(length, &mut data);
+            }
+
+            if !matches {
                 has_unmatched = true;
             }
 
+            self.restore_size += length;
             file_pos += length;
         }
 
         self.file_lengths.push(file_pos);
 
-        if !has_unmatched && open_file.is_some() {
+        // TODO: FIXME: optimize!
+        if !has_unmatched && existing_file.is_some() {
             Ok(AddFileResult::Verified)
         } else {
             Ok(AddFileResult::Modify)

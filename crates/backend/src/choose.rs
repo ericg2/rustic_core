@@ -1,33 +1,32 @@
 //! This module contains [`BackendOptions`] and helpers to choose a backend from a given url.
 use derive_setters::Setters;
+use std::collections::HashMap;
+use std::fmt::Debug;
 use std::{collections::BTreeMap, sync::Arc};
 use strum::{Display, EnumString};
 
-use rustic_core::{ErrorKind, RepositoryBackends, RusticError, RusticResult, WriteBackend};
-
-use crate::{
-    local::LocalBackend,
-    util::{BackendLocation, location_to_type_and_path},
+use rustic_core::{
+    ErrorKind, RepositoryBackends, RepositoryConfig, RusticError, RusticResult, WriteBackend,
 };
+
+use crate::util::{BackendLocation, location_to_type_and_path};
 
 #[cfg(feature = "opendal")]
 use crate::opendal::OpenDALBackend;
 
-#[cfg(feature = "rclone")]
-use crate::rclone::RcloneBackend;
-
-#[cfg(feature = "rest")]
-use crate::rest::RestBackend;
-
+use crate::local::LocalConfig;
+use crate::opendal::OpenDALConfig;
+use crate::rclone::RcloneConfig;
+use crate::rest::RestConfig;
 #[cfg(feature = "clap")]
 use clap::ValueHint;
+use serde::de::DeserializeOwned;
 
 /// Options for a backend.
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 #[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Default, Debug, serde::Deserialize, serde::Serialize, Setters)]
+#[derive(Clone, Default, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
-#[setters(into, strip_option)]
 #[non_exhaustive]
 pub struct BackendOptions {
     /// Repository to use
@@ -63,6 +62,69 @@ pub struct BackendOptions {
 }
 
 impl BackendOptions {
+    #[deprecated = "Use `set_repo` instead."]
+    pub fn repository(mut self, repo: impl Into<String>) -> Self {
+        self.repository = Some(repo.into());
+        self
+    }
+
+    #[deprecated = "Use `set_repo_hot` instead."]
+    pub fn repo_hot(mut self, repo: impl Into<String>) -> Self {
+        self.repo_hot = Some(repo.into());
+        self
+    }
+
+    pub fn set_repo(mut self, repo: impl RepositoryConfig) -> Self {
+        self.repository = Some(repo.get_path());
+        self.options_cold = repo.get_options().into_iter().collect();
+        self
+    }
+
+    pub fn set_repo_hot(mut self, repo: impl RepositoryConfig) -> Self {
+        self.repository = Some(repo.get_path());
+        self.options_hot = repo.get_options().into_iter().collect();
+        self
+    }
+
+    pub fn options<K, V, I>(mut self, dict: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.options = dict
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        self
+    }
+
+    pub fn options_hot<K, V, I>(mut self, dict: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.options_hot = dict
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        self
+    }
+
+    pub fn options_cold<K, V, I>(mut self, dict: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        self.options_cold = dict
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        self
+    }
+
     /// Convert the options to backends.
     ///
     /// # Errors
@@ -176,23 +238,33 @@ pub enum SupportedBackend {
     OpenDAL,
 }
 
+impl SupportedBackend {
+    fn map_config(
+        &self,
+        location: BackendLocation,
+        options: Option<BTreeMap<String, String>>,
+    ) -> RusticResult<Arc<dyn RepositoryConfig>> {
+        let options = options.unwrap_or_default();
+        Ok(match self {
+            Self::Local => Arc::new(LocalConfig::from_iter(location, options)?),
+            #[cfg(feature = "rclone")]
+            Self::Rclone => Arc::new(RcloneConfig::from_iter(location, options)?),
+            #[cfg(feature = "rest")]
+            Self::Rest => Arc::new(RestConfig::from_iter(location, options)?),
+            #[cfg(feature = "opendal")]
+            Self::OpenDAL => Arc::new(OpenDALConfig::from_iter(location, options)?),
+        })
+    }
+}
+
 impl BackendChoice for SupportedBackend {
     fn to_backend(
         &self,
         location: BackendLocation,
         options: Option<BTreeMap<String, String>>,
     ) -> RusticResult<Arc<dyn WriteBackend>> {
-        let options = options.unwrap_or_default();
-
-        Ok(match self {
-            Self::Local => Arc::new(LocalBackend::new(location, options)?),
-            #[cfg(feature = "rclone")]
-            Self::Rclone => Arc::new(RcloneBackend::new(location, options)?),
-            #[cfg(feature = "rest")]
-            Self::Rest => Arc::new(RestBackend::new(location, options)?),
-            #[cfg(feature = "opendal")]
-            Self::OpenDAL => Arc::new(OpenDALBackend::new(location, options)?),
-        })
+        let map = self.map_config(location, options)?;
+        map.get_repo()
     }
 }
 

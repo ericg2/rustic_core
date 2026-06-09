@@ -19,14 +19,14 @@ use log::info;
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    ReadSource, RepositoryBackends, RusticError,
+    ReadSource, ReadSourceBuilder, RepositoryBackends, RusticError,
     backend::{
         FileType, FindInBackend, ReadBackend, WriteBackend,
         cache::{Cache, CachedBackend},
         decrypt::{DecryptBackend, DecryptReadBackend, DecryptWriteBackend},
+        dest::Destination,
         hotcold::HotColdBackend,
-        local_destination::LocalDestination,
-        node::Node,
+        node::{ExtendedAttribute, Node},
         warm_up::WarmUpAccessBackend,
     },
     blob::{
@@ -1601,7 +1601,7 @@ impl<S: IndexedTree> Repository<S> {
         restore_infos: RestorePlan,
         opts: &RestoreOptions,
         node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
-        dest: &LocalDestination,
+        dest: &impl Destination,
     ) -> RusticResult<()> {
         restore_repository(restore_infos, self, *opts, node_streamer, dest)
     }
@@ -1679,47 +1679,52 @@ impl<S: IndexedIds> Repository<S> {
     /// # Returns
     ///  
     /// The saved snapshot.
-    pub fn backup(
+    pub fn backup<R>(
         &self,
         opts: &BackupOptions,
-        source: &PathList,
+        source: &R,
         snap: SnapshotFile,
-    ) -> RusticResult<SnapshotFile> {
-        commands::backup::backup(self, opts, source, snap)
-    }
-
-    /// Run a backup of `source` using a `ReadSource`.
-    ///
-    /// You have to give a preflled [`SnapshotFile`] which is modified and saved.
-    ///
-    /// # Arguments
-    ///
-    /// * `opts` - The options to use
-    /// * `src` - The source to backup
-    /// * `snap` - The snapshot to modify and save
-    ///
-    /// # Errors
-    ///
-    // TODO: Document errors
-    ///
-    /// # Returns
-    ///  
-    /// The saved snapshot.
-    pub fn archive<R>(
-        &self,
-        opts: &BackupOptions,
-        src: &R,
-        snap: SnapshotFile,
-        backup_paths: &[PathBuf],
     ) -> RusticResult<SnapshotFile>
     where
-        S: IndexedIds,
-        R: ReadSource + 'static,
-        <R as ReadSource>::Open: Send,
-        <R as ReadSource>::Iter: Send,
+        R: ReadSourceBuilder + 'static,
+        <<R as ReadSourceBuilder>::Reader as ReadSource>::Iter: Send,
+        <<R as ReadSourceBuilder>::Reader as ReadSource>::Open: Send,
     {
-        commands::backup::archive(self, opts, src, snap, backup_paths)
+        commands::backup::backup(self, opts, &source.get_reader()?, snap)
     }
+
+    // /// Run a backup of `source` using a `ReadSource`.
+    // ///
+    // /// You have to give a preflled [`SnapshotFile`] which is modified and saved.
+    // ///
+    // /// # Arguments
+    // ///
+    // /// * `opts` - The options to use
+    // /// * `src` - The source to backup
+    // /// * `snap` - The snapshot to modify and save
+    // ///
+    // /// # Errors
+    // ///
+    // // TODO: Document errors
+    // ///
+    // /// # Returns
+    // ///
+    // /// The saved snapshot.
+    // pub fn archive<R>(
+    //     &self,
+    //     opts: &BackupOptions,
+    //     src: &R,
+    //     snap: SnapshotFile,
+    //     backup_paths: &[PathBuf],
+    // ) -> RusticResult<SnapshotFile>
+    // where
+    //     S: IndexedIds,
+    //     R: ReadSource + 'static,
+    //     <R as ReadSource>::Open: Send,
+    //     <R as ReadSource>::Iter: Send,
+    // {
+    //     commands::backup::archive(self, opts, src, snap, backup_paths)
+    // }
 }
 
 impl<S: IndexedFull> Repository<S> {
@@ -1818,10 +1823,11 @@ impl<S: IndexedFull> Repository<S> {
         &self,
         opts: &RestoreOptions,
         node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
-        dest: &LocalDestination,
+        dest: &impl Destination,
         dry_run: bool,
     ) -> RusticResult<RestorePlan> {
-        collect_and_prepare(self, *opts, node_streamer, dest, dry_run)
+        let walker = dest.read_source()?.entries();
+        collect_and_prepare(self, *opts, node_streamer, walker, dest, dry_run)
     }
 
     /// Copy the given `snapshots` to `repo_dest`.

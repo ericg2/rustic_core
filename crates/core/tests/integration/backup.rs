@@ -7,12 +7,10 @@ use anyhow::Result;
 use insta::Settings;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
-
-use rustic_core::{
-    BackupOptions, CommandInput, Grouped, ParentOptions, PathList, SnapshotGroupCriterion,
-    SnapshotOptions, StringList,
-    repofile::{PackId, SnapshotFile},
-};
+use rustic_backend::local::LocalSource;
+use rustic_backend::stdin::StdinSource;
+use rustic_backend::stdout::{CommandSource};
+use rustic_core::{BackupOptions, CommandInput, Grouped, ParentOptions, PathList, SnapshotGroupCriterion, SnapshotOptions, StringList, repofile::{PackId, SnapshotFile}, FilterOptions, Node, NodeType, Metadata, LsOptions, RusticResult};
 
 use super::{
     RepoOpen, TestSource, assert_with_win, insta_node_redaction, insta_snapshotfile_redaction,
@@ -38,7 +36,8 @@ fn test_backup_with_tar_gz_passes(
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
 
     // first backup
-    let first_snapshot = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let src = LocalSource::new(paths);
+    let first_snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // We can also bind to scope ( https://docs.rs/insta/latest/insta/struct.Settings.html#method.bind_to_scope )
     // But I think that can get messy with a lot of tests, also checking which settings are currently applied
@@ -68,7 +67,7 @@ fn test_backup_with_tar_gz_passes(
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // second backup
-    let second_snapshot = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let second_snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("backup-tar-summary-second", &second_snapshot);
@@ -89,7 +88,7 @@ fn test_backup_with_tar_gz_passes(
         .to_snapshot()?;
     let opts =
         opts.parent_opts(ParentOptions::default().parents(vec![second_snapshot.id.to_string()]));
-    let third_snapshot = repo.backup(&opts, paths, snap)?;
+    let third_snapshot = repo.backup(&opts, &src, snap)?;
 
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("backup-tar-summary-third", &third_snapshot);
@@ -166,7 +165,8 @@ fn test_backup_dry_run_with_tar_gz_passes(
         .dry_run(true);
 
     // dry-run backup
-    let snap_dry_run = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let src = LocalSource::new(paths);
+    let snap_dry_run = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("dryrun-tar-summary-first", &snap_dry_run);
@@ -180,7 +180,7 @@ fn test_backup_dry_run_with_tar_gz_passes(
 
     // first real backup
     let opts = opts.dry_run(false);
-    let first_snapshot = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let first_snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
     assert_eq!(snap_dry_run.tree, first_snapshot.tree);
     let packs: Vec<_> = repo.list::<PackId>()?.collect();
 
@@ -198,7 +198,7 @@ fn test_backup_dry_run_with_tar_gz_passes(
     let repo = repo.to_indexed_ids()?;
     // second dry-run backup
     let opts = opts.dry_run(true);
-    let snap_dry_run = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let snap_dry_run = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("dryrun-tar-summary-second", &snap_dry_run);
@@ -214,7 +214,7 @@ fn test_backup_dry_run_with_tar_gz_passes(
     let repo = repo.to_indexed_ids()?;
     // second real backup
     let opts = opts.dry_run(false);
-    let second_snapshot = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let second_snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
     assert_eq!(snap_dry_run.tree, second_snapshot.tree);
     Ok(())
 }
@@ -226,14 +226,11 @@ fn test_backup_stdin_command(
 ) -> Result<()> {
     // Fixtures
     let repo = set_up_repo?.to_indexed_ids()?;
-    let paths = PathList::from_string("-")?;
-
-    let cmd: CommandInput = "echo test".parse()?;
-    let opts = BackupOptions::default()
-        .stdin_filename("test")
-        .stdin_command(cmd);
+    let d: CommandInput = "echo test".parse()?;
+    let src = CommandSource::new(d, "test");
+    let opts = BackupOptions::default();
     // backup data from cmd
-    let snapshot = repo.backup(&opts, &paths, SnapshotFile::default())?;
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("stdin-command-summary", &snapshot);
     });
@@ -254,11 +251,6 @@ fn test_backup_stdin_command(
 fn test_backup_excludes_xattr_entries(set_up_repo: Result<RepoOpen>) -> Result<()> {
     use std::ffi::OsStr;
     use std::fs;
-
-    use rustic_core::{
-        LocalSourceFilterOptions, LsOptions, RusticResult,
-        repofile::{Metadata, Node, NodeType},
-    };
 
     if !xattr::SUPPORTED_PLATFORM {
         return Ok(());
@@ -283,13 +275,15 @@ fn test_backup_excludes_xattr_entries(set_up_repo: Result<RepoOpen>) -> Result<(
     let repo = set_up_repo?.to_indexed_ids()?;
     let paths = PathList::from_iter(Some(base.to_path_buf()));
 
-    let filter_opts = LocalSourceFilterOptions::default()
-        .exclude_if_xattr(vec!["user.rustic_test_exclude".to_string()]);
-    let opts = BackupOptions::default()
-        .as_path(PathBuf::from("test"))
-        .ignore_filter_opts(filter_opts);
 
-    let snapshot = repo.backup(&opts, &paths, SnapshotFile::default())?;
+    let filter_opts = FilterOptions::default()
+        .exclude_if_xattr(vec!["user.rustic_test_exclude".to_string()]);
+
+    let opts = BackupOptions::default()
+        .as_path(PathBuf::from("test"));
+
+    let src = LocalSource::new(paths).filter_opts(filter_opts);
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     let repo = repo.to_indexed_ids()?;
     let mut root_node = Node::new_node(OsStr::new(""), NodeType::Dir, Metadata::default());

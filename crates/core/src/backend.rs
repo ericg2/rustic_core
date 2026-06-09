@@ -1,16 +1,12 @@
 //! Module for backend related functionality.
 pub(crate) mod cache;
-pub(crate) mod childstdout;
 pub(crate) mod decrypt;
+pub(crate) mod dest;
 pub(crate) mod dry_run;
+pub(crate) mod filters;
 pub(crate) mod hotcold;
-pub(crate) mod ignore;
-pub(crate) mod local_destination;
 pub(crate) mod node;
-pub(crate) mod stdin;
 pub(crate) mod warm_up;
-
-use std::{io::Read, ops::Deref, path::PathBuf, sync::Arc};
 
 use bytes::Bytes;
 use enum_map::Enum;
@@ -19,13 +15,18 @@ use log::trace;
 #[cfg(test)]
 use mockall::mock;
 
-use serde_derive::{Deserialize, Serialize};
-
 use crate::{
+    Destination, FilterOptions,
     backend::node::{Metadata, Node, NodeType},
     error::RusticResult,
     id::Id,
 };
+use serde::de::DeserializeOwned;
+use serde_derive::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::path::Path;
+use std::{io::Read, ops::Deref, path::PathBuf, sync::Arc};
 
 /// [`BackendErrorKind`] describes the errors that can be returned by the various Backends
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
@@ -422,7 +423,7 @@ pub struct ReadSourceEntry<O> {
 }
 
 impl<O> ReadSourceEntry<O> {
-    fn from_path(path: PathBuf, open: Option<O>) -> BackendResult<Self> {
+    pub fn from_path(path: PathBuf, open: Option<O>) -> BackendResult<Self> {
         let node = Node::new_node(
             path.file_name()
                 .ok_or_else(|| BackendErrorKind::PathNotAllowed(path.clone()))?,
@@ -440,7 +441,7 @@ impl<O> ReadSourceEntry<O> {
 
 /// Trait for backends that can read and open sources.
 /// This trait is implemented by all backends that can read data and open from a source.
-pub trait ReadSourceOpen {
+pub trait ReadFileOpen {
     /// The Reader used for this source
     type Reader: Read + Send + 'static;
 
@@ -456,8 +457,57 @@ pub trait ReadSourceOpen {
     fn open(self) -> RusticResult<Self::Reader>;
 }
 
+/// Trait for backends that can be restored to.
+pub trait DestinationBuilder:
+    serde::Serialize + DeserializeOwned + Debug + Send + Sync + 'static
+{
+    type Output: Destination;
+
+    /// Opens a [`Destination`] for the specified config.
+    ///
+    /// # Errors
+    ///
+    /// If the backend fails to initialize writing.
+    fn get_destination(&self) -> RusticResult<Self::Output>;
+}
+
+/// Trait for backends that can start a read.
+pub trait ReadSourceBuilder:
+    serde::Serialize + DeserializeOwned + Debug + Sync + Send + 'static
+{
+    type Reader: ReadSource;
+
+    /// Opens a [`ReadSource`] for the specified path and options.
+    ///
+    /// # Errors
+    ///
+    /// If the backend fails to initialize reading.
+    fn get_reader(&self) -> RusticResult<Self::Reader>;
+}
+
+/// Trait for repository backends.
+pub trait RepositoryConfig: Debug + Send + Sync {
+    fn get_path(&self) -> String;
+    fn get_options(&self) -> HashMap<String, String>;
+    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>>;
+}
+
+impl<T: RepositoryConfig + ?Sized> RepositoryConfig for &T {
+    fn get_path(&self) -> String {
+        (**self).get_path()
+    }
+
+    fn get_options(&self) -> HashMap<String, String> {
+        (**self).get_options()
+    }
+
+    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
+        (**self).get_repo()
+    }
+}
+
 /// blanket implementation for readers
-impl<T: Read + Send + 'static> ReadSourceOpen for T {
+impl<T: Read + Send + 'static> ReadFileOpen for T {
     type Reader = T;
     fn open(self) -> RusticResult<Self::Reader> {
         Ok(self)
@@ -469,7 +519,7 @@ impl<T: Read + Send + 'static> ReadSourceOpen for T {
 /// This trait is implemented by all backends that can read data from a source.
 pub trait ReadSource: Sync + Send {
     /// The type used to handle open source files
-    type Open: ReadSourceOpen;
+    type Open: ReadFileOpen;
     /// The iterator we use to iterate over the source entries
     type Iter: Iterator<Item = RusticResult<ReadSourceEntry<Self::Open>>>;
 
@@ -484,8 +534,15 @@ pub trait ReadSource: Sync + Send {
     /// The size of the source, if it is known.
     fn size(&self) -> RusticResult<Option<u64>>;
 
-    /// Returns an iterator over the entries of the source.
+    /// # Returns
+    ///
+    /// An [`Iterator`] over the entries of the source.
     fn entries(&self) -> Self::Iter;
+
+    /// # Returns
+    ///
+    /// All roots of the lookup. Some may not exist due to filters.
+    fn paths(&self) -> Vec<PathBuf>;
 }
 
 /// The backends a repository can be initialized and operated on

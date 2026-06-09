@@ -11,7 +11,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
 };
-
 use derive_setters::Setters;
 use dunce::canonicalize;
 use gethostname::gethostname;
@@ -91,7 +90,8 @@ pub struct SnapshotOptions {
     /// Add description to snapshot from file
     #[cfg_attr(
         feature = "clap",
-        clap(long, value_name = "FILE", conflicts_with = "description", value_hint = ValueHint::FilePath)
+        clap(long, value_name = "FILE", conflicts_with = "description", value_hint = ValueHint::FilePath
+        )
     )]
     #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub description_from: Option<PathBuf>,
@@ -145,7 +145,7 @@ impl SnapshotOptions {
                 "Failed to create string list from tag `{tag}`. The value must be a valid unicode string.",
                 err,
             )
-            .attach_context("tag", tag)
+                .attach_context("tag", tag)
         })?);
         Ok(self)
     }
@@ -440,9 +440,9 @@ impl FromStr for SnapshotRequest {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let err = || {
             RusticError::new(
-                    ErrorKind::InvalidInput,
-                    "Invalid snapshot identifier \"{input}\". Expected either a snapshot id: \"01a2b3c4\" or \"latest\" or \"latest~N\" (N >= 0).",
-                )
+                ErrorKind::InvalidInput,
+                "Invalid snapshot identifier \"{input}\". Expected either a snapshot id: \"01a2b3c4\" or \"latest\" or \"latest~N\" (N >= 0).",
+            )
                 .attach_context("input", s)
         };
 
@@ -549,7 +549,7 @@ impl SnapshotFile {
                         ErrorKind::InvalidInput,
                         "Failed to convert hostname `{hostname}` to string. The value must be a valid unicode string.",
                     )
-                    .attach_context("hostname", hostname.to_string_lossy().to_string())
+                        .attach_context("hostname", hostname.to_string_lossy().to_string())
                 })?
                 .to_string()
         };
@@ -593,7 +593,7 @@ impl SnapshotFile {
                     "Failed to read description file `{path}`. Please make sure the file exists and is readable.",
                     err,
                 )
-                .attach_context("path", path.to_string_lossy().to_string())
+                    .attach_context("path", path.to_string_lossy().to_string())
             })?);
         }
 
@@ -748,7 +748,7 @@ impl SnapshotFile {
 
     fn latest_n_from_iter(
         n: usize,
-        iter: impl IntoIterator<Item = Self>,
+        iter: impl IntoIterator<Item=Self>,
     ) -> RusticResult<Vec<Self>> {
         let latest: Vec<_> = iter
             .into_iter()
@@ -881,7 +881,7 @@ impl SnapshotFile {
         be: &B,
         filter: F,
         p: &Progress,
-    ) -> RusticResult<impl Iterator<Item = Self>>
+    ) -> RusticResult<impl Iterator<Item=Self>>
     where
         B: DecryptReadBackend,
         F: FnMut(&Self) -> bool,
@@ -1165,7 +1165,7 @@ impl StringList {
     }
 
     /// Turn this [`StringList`] into an Iterator
-    pub fn iter(&self) -> impl Iterator<Item = &String> {
+    pub fn iter(&self) -> impl Iterator<Item=&String> {
         self.0.iter()
     }
 }
@@ -1179,9 +1179,63 @@ impl<'str> IntoIterator for &'str StringList {
     }
 }
 
+pub trait PathLister {
+    fn get_paths(&self) -> PathList;
+}
+
+impl<P: AsRef<Path>> PathLister for P {
+    fn get_paths(&self) -> PathList {
+        PathList(vec![self.as_ref().to_path_buf()])
+    }
+}
+
+impl PathLister for PathList {
+    fn get_paths(&self) -> PathList {
+        self.clone()
+    }
+}
+
+
 /// `PathList` is a rustic-internal list of `PathBuf`s. It is used in the [`crate::Repository::backup`] command.
 #[derive(Default, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct PathList(Vec<PathBuf>);
+pub struct PathList(pub(crate) Vec<PathBuf>);
+
+impl From<PathBuf> for PathList {
+    fn from(value: PathBuf) -> Self {
+        PathList(vec![value])
+    }
+}
+
+impl From<&PathBuf> for PathList {
+    fn from(value: &PathBuf) -> Self {
+        PathList(vec![value.to_path_buf()])
+    }
+}
+
+impl From<&PathList> for PathList {
+    fn from(value: &PathList) -> Self {
+        value.clone()
+    }
+}
+
+impl From<&Path> for PathList {
+    fn from(value: &Path) -> Self {
+        PathList(vec![value.to_path_buf()])
+    }
+}
+
+impl From<&str> for PathList {
+    fn from(value: &str) -> Self {
+        PathList(vec![PathBuf::from(value)])
+    }
+}
+
+impl From<String> for PathList {
+    fn from(value: String) -> Self {
+        PathList(vec![PathBuf::from(value)])
+    }
+}
+
 
 impl Display for PathList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1194,7 +1248,7 @@ impl Display for PathList {
 }
 
 impl<T: Into<PathBuf>> FromIterator<T> for PathList {
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
         Self(iter.into_iter().map(T::into).collect())
     }
 }
@@ -1480,7 +1534,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-        .unwrap();
+            .unwrap();
         assert_eq!(latest, snap_id3);
 
         let snap_id3 = SnapshotFile::from_str(&be, "003", |_sn| true, &p).unwrap();
@@ -1526,7 +1580,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-        .unwrap();
+            .unwrap();
         let ids: Vec<_> = snaps.iter().map(|sn| *sn.id).collect();
         assert_eq!(ids, vec![id1, id2, id3]);
 
@@ -1541,7 +1595,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-        .unwrap();
+            .unwrap();
         let ids: Vec<_> = snaps.iter().map(|sn| *sn.id).collect();
         assert_eq!(ids, vec![id2, id2, id1]);
 
@@ -1569,7 +1623,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-        .unwrap();
+            .unwrap();
         let ids: Vec<_> = snaps.iter().map(|sn| *sn.id).collect();
         assert_eq!(ids, vec![id3, id1]);
 
@@ -1584,7 +1638,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-        .unwrap();
+            .unwrap();
         let ids: Vec<_> = snaps.iter().map(|sn| *sn.id).collect();
         assert_eq!(ids, vec![id3, id1, id3]);
     }

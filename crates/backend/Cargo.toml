@@ -35,11 +35,11 @@ cli = ["merge", "clap"]
 merge = ["dep:conflate"]
 clap = ["dep:clap"]
 opendal = [
-  "dep:opendal",
-  "dep:rayon",
-  "dep:tokio",
-  "tokio/rt-multi-thread",
-  "dep:typed-path",
+    "dep:opendal",
+    "dep:rayon",
+    "dep:tokio",
+    "tokio/rt-multi-thread",
+    "dep:typed-path",
 ]
 rest = ["dep:reqwest", "dep:backon"]
 rclone = ["rest", "dep:rand", "dep:semver"]
@@ -60,6 +60,9 @@ bytes = { workspace = true }
 derive_setters = "0.1.9"
 jiff = "0.2.19"
 strum = { version = "0.28.0", features = ["derive"] }
+ignore = "0.4.25"
+serde_with = { version = "3.16.1", features = ["base64"] }
+serde_json = "1"
 
 # general / backend choosing
 hex = { version = "0.4.3", features = ["serde"] }
@@ -87,19 +90,99 @@ bytesize = "2.3.1"
 rayon = { version = "1.11.0", optional = true }
 tokio = { version = "1.49.0", optional = true, default-features = false }
 typed-path = { version = "0.12.2", optional = true }
+filetime = "0.2.29"
+nix = "0.31.3"
+cached = "1.1.0"
+dashmap = "6"
+
+[target.'cfg(not(any(windows, target_os="openbsd")))'.dependencies]
+# for local source/destination
+xattr = "1"
 
 [target.'cfg(not(windows))'.dependencies]
 # opendal backend
 # - sftp is not supported on windows, see https://github.com/apache/incubator-opendal/issues/2963
-opendal = { version = "0.57.0", features = ["blocking", "services-b2", "services-ftp", "services-sftp", "services-swift", "services-azblob", "services-azdls", "services-cos", "services-fs", "services-dropbox", "services-gdrive", "services-gcs", "services-ghac", "services-http", "services-ipmfs", "services-memory", "services-obs", "services-onedrive", "services-oss", "services-pcloud", "services-s3", "services-webdav", "services-webhdfs", "services-azfile", "layers-throttle", "services-yandex-disk"], optional = true }
+opendal = {
+    version = "0.57.0",
+    features = [
+        "blocking",
+        "services-b2",
+        "services-ftp",
+        "services-sftp",
+        "services-swift",
+        "services-azblob",
+        "services-azdls",
+        "services-cos",
+        "services-fs",
+        "services-dropbox",
+        "services-gdrive",
+        "services-gcs",
+        "services-ghac",
+        "services-http",
+        "services-ipmfs",
+        "services-memory",
+        "services-obs",
+        "services-onedrive",
+        "services-oss",
+        "services-pcloud",
+        "services-s3",
+        "services-webdav",
+        "services-webhdfs",
+        "services-azfile",
+        "services-yandex-disk",
+        "layers-throttle",
+    ],
+    optional = true
+}
 
 [target.'cfg(windows)'.dependencies]
 # opendal backend
-opendal = { version = "0.57.0", features = ["blocking", "services-b2", "services-ftp", "services-swift", "services-azblob", "services-azdls", "services-cos", "services-fs", "services-dropbox", "services-gdrive", "services-gcs", "services-ghac", "services-http", "services-ipmfs", "services-memory", "services-obs", "services-onedrive", "services-oss", "services-pcloud", "services-s3", "services-webdav", "services-webhdfs", "services-azfile", "layers-throttle", "services-yandex-disk"], optional = true }
+opendal = {
+    version = "0.57.0",
+    features = [
+        "blocking",
+        "services-b2",
+        "services-ftp",
+        "services-swift",
+        "services-azblob",
+        "services-azdls",
+        "services-cos",
+        "services-fs",
+        "services-dropbox",
+        "services-gdrive",
+        "services-gcs",
+        "services-ghac",
+        "services-http",
+        "services-ipmfs",
+        "services-memory",
+        "services-obs",
+        "services-onedrive",
+        "services-oss",
+        "services-pcloud",
+        "services-s3",
+        "services-webdav",
+        "services-webhdfs",
+        "services-azfile",
+        "layers-throttle",
+        "services-yandex-disk"
+    ],
+    optional = true
+}
 
 [dev-dependencies]
 anyhow = { workspace = true }
 rstest = { workspace = true }
+flate2 = "1.1.9"
+globset = "0.4.18"
+insta = { version = "1.46.3", features = ["redactions", "ron"] }
+mockall = "0.14"
+pretty_assertions = "1.4.1"
+proptest = { version = "1.10.0", default-features = false, features = ["std"] }
+# We need to have rustic_backend here, because the doc-tests in lib.rs of rustic_core
+rustic_backend = { workspace = true }
+rustic_testing = { workspace = true }
+tar = "0.4.44"
+tempfile = { workspace = true }
 toml = "1.0.3"
 
 [lints]

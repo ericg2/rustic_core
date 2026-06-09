@@ -10,14 +10,8 @@ use serde_derive::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    CommandInput, Excludes, ReadSource,
+    CommandInput, Excludes, FilterOptions, ReadSource,
     archiver::{Archiver, parent::Parent},
-    backend::{
-        childstdout::ChildStdoutSource,
-        dry_run::DryRunBackend,
-        ignore::{LocalSource, LocalSourceFilterOptions, LocalSourceSaveOptions},
-        stdin::StdinSource,
-    },
     error::{ErrorKind, RusticError, RusticResult},
     repofile::{
         PathList, SnapshotFile,
@@ -31,6 +25,7 @@ use crate::{
 
 #[cfg(feature = "clap")]
 use clap::ValueHint;
+use crate::backend::dry_run::DryRunBackend;
 
 /// `backup` subcommand
 #[serde_as]
@@ -148,19 +143,6 @@ impl ParentOptions {
 #[non_exhaustive]
 /// Options for the `backup` command.
 pub struct BackupOptions {
-    /// Set filename to be used when backing up from stdin
-    #[cfg_attr(
-        feature = "clap",
-        clap(long, value_name = "FILENAME", default_value = "stdin", value_hint = ValueHint::FilePath)
-    )]
-    #[cfg_attr(feature = "merge", merge(skip))]
-    pub stdin_filename: String,
-
-    /// Call the given command and use its output as stdin
-    #[cfg_attr(feature = "clap", clap(long, value_name = "COMMAND"))]
-    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
-    pub stdin_command: Option<CommandInput>,
-
     /// Manually set backup path in snapshot
     #[cfg_attr(feature = "clap", clap(long, value_name = "PATH", value_hint = ValueHint::DirPath))]
     #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
@@ -179,22 +161,7 @@ pub struct BackupOptions {
     #[cfg_attr(feature = "clap", clap(flatten))]
     #[serde(flatten)]
     /// Options how to use a parent snapshot
-    pub parent_opts: ParentOptions,
-
-    #[cfg_attr(feature = "clap", clap(flatten))]
-    #[serde(flatten)]
-    /// Options how to save entries from a local source
-    pub ignore_save_opts: LocalSourceSaveOptions,
-
-    #[cfg_attr(feature = "clap", clap(flatten))]
-    #[serde(flatten)]
-    /// excludes
-    pub excludes: Excludes,
-
-    #[cfg_attr(feature = "clap", clap(flatten))]
-    #[serde(flatten)]
-    /// Options how to filter from a local source
-    pub ignore_filter_opts: LocalSourceFilterOptions,
+    pub parent_opts: ParentOptions
 }
 
 /// Backup data, create a snapshot.
@@ -222,12 +189,11 @@ pub struct BackupOptions {
 /// # Returns
 ///
 /// The snapshot pointing to the backup'ed data.
-pub(crate) fn archive<R, S>(
+pub(crate) fn backup<R, S>(
     repo: &Repository<S>,
     opts: &BackupOptions,
     src: &R,
     mut snap: SnapshotFile,
-    backup_paths: &[PathBuf],
 ) -> RusticResult<SnapshotFile>
 where
     S: IndexedIds,
@@ -236,7 +202,7 @@ where
     <R as ReadSource>::Iter: Send,
 {
     let index = repo.index();
-
+    let backup_paths = src.paths();
     let as_path = opts
         .as_path
         .as_ref()
@@ -256,9 +222,9 @@ where
 
     let paths = as_path
         .as_ref()
-        .map_or(backup_paths, |p| std::slice::from_ref(p));
+        .map_or(backup_paths.clone(), |p| vec![p.clone()]);
 
-    snap.paths.set_paths(paths).map_err(|err| {
+    snap.paths.set_paths(&paths).map_err(|err| {
         RusticError::with_source(
             ErrorKind::Internal,
             "Failed to set paths `{paths}` in snapshot.",
@@ -296,61 +262,67 @@ where
         &p,
     )
 }
-
-/// Backup data, create a snapshot.
-///
-/// # Type Parameters
-///
-/// * `S` - The type of the indexed tree.
-///
-/// # Arguments
-///
-/// * `repo` - The repository to use
-/// * `opts` - The backup options
-/// * `source` - The source to backup
-/// * `snap` - The snapshot with raw information
-///
-/// # Errors
-///
-/// * If sending the message to the raw packer fails.
-/// * If converting the data length to u64 fails
-/// * If sending the message to the raw packer fails.
-/// * If the index file could not be serialized.
-/// * If the time is not in the range of `Local::now()`
-///
-/// # Returns
-///
-/// The snapshot pointing to the backup'ed data.
-pub(crate) fn backup<S: IndexedIds>(
-    repo: &Repository<S>,
-    opts: &BackupOptions,
-    source: &PathList,
-    snap: SnapshotFile,
-) -> RusticResult<SnapshotFile> {
-    let backup_stdin = PathList::from_string("-")?;
-
-    let snap = if *source == backup_stdin {
-        let path = PathBuf::from(&opts.stdin_filename);
-        let backup_paths = vec![path.clone()];
-        if let Some(command) = &opts.stdin_command {
-            let src = ChildStdoutSource::new(command, path)?;
-            let res = archive(repo, opts, &src, snap, &backup_paths)?;
-            src.finish()?;
-            res
-        } else {
-            let src = StdinSource::new(path);
-            archive(repo, opts, &src, snap, &backup_paths)?
-        }
-    } else {
-        let backup_path = source.paths();
-        let src = LocalSource::new(
-            opts.ignore_save_opts,
-            &opts.excludes,
-            &opts.ignore_filter_opts,
-            &backup_path,
-        )?;
-        archive(repo, opts, &src, snap, &backup_path)?
-    };
-
-    Ok(snap)
-}
+//
+// Backup data, create a snapshot.
+//
+// # Type Parameters
+//
+// * `S` - The type of the indexed tree.
+//
+// # Arguments
+//
+// * `repo` - The repository to use
+// * `opts` - The backup options
+// * `source` - The source to backup
+// * `snap` - The snapshot with raw information
+//
+// # Errors
+//
+// * If sending the message to the raw packer fails.
+// * If converting the data length to u64 fails
+// * If sending the message to the raw packer fails.
+// * If the index file could not be serialized.
+// * If the time is not in the range of `Local::now()`
+//
+// # Returns
+//
+// The snapshot pointing to the backup'ed data.
+//
+// pub(crate) fn backup<R, S: IndexedIds>(
+//     repo: &Repository<S>,
+//     opts: &BackupOptions,
+//     source: &R,
+//     snap: SnapshotFile,
+// ) -> RusticResult<SnapshotFile>
+// where
+//     R: ReadSource + 'static,
+//     <R as ReadSource>::Open: Send,
+//     <R as ReadSource>::Iter: Send,
+// {
+//     let backup_stdin = PathList::from_string("-")?;
+//
+//     let snap = if *source == backup_stdin {
+//         let path = PathBuf::from(&opts.stdin_filename);
+//         let backup_paths = vec![path.clone()];
+//         if let Some(command) = &opts.stdin_command {
+//             let src = ChildStdoutSource::new(command, path)?;
+//             let res = archive(repo, opts, &src, snap, &backup_paths)?;
+//             src.finish()?;
+//             res
+//         } else {
+//             let src = StdinSource::new(path);
+//             archive(repo, opts, &src, snap, &backup_paths)?
+//         }
+//     } else {
+//         let backup_path = source.paths();
+//         let src = LocalSource::new(
+//             opts.ignore_save_opts,
+//             &opts.excludes,
+//             &opts.ignore_filter_opts,
+//             &backup_path,
+//         )?;
+//         archive(repo, opts, &src, snap, &backup_path)?
+//     };
+//
+//     Ok(snap)
+// }

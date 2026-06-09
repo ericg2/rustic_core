@@ -5,7 +5,7 @@ use insta::Settings;
 use jiff::Zoned;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
-
+use rustic_backend::local::LocalSource;
 use rustic_core::{
     BackupOptions, Excludes, LsOptions, NodeModification, RewriteOptions, RewriteTreesOptions,
     RusticResult, StringList,
@@ -36,7 +36,8 @@ fn test_rewrite(
     let backup_opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
 
     // first backup
-    let snapshot = repo.backup(&backup_opts, paths, SnapshotFile::default())?;
+    let src = LocalSource::new(paths);
+    let snapshot = repo.backup(&backup_opts, &src, SnapshotFile::default())?;
 
     let modification = SnapshotModification::default()
         .set_label("label".to_string())
@@ -107,8 +108,8 @@ fn test_rewrite(
     let glob = glob.replace('\\', "/"); // correct windows paths for glob
 
     let excludes = Excludes::default().globs(vec![glob]);
-    let backup_opts = backup_opts.excludes(excludes);
-    let snapshot = repo.backup(&backup_opts, paths, SnapshotFile::default())?;
+    let src = LocalSource::new(paths).excludes(excludes);
+    let snapshot = repo.backup(&backup_opts, &src, SnapshotFile::default())?;
     // trees should be identical
     assert_eq!(snapshot.tree, rewrite_snaps[0].tree);
 

@@ -1,19 +1,26 @@
+use std::collections::HashMap;
 use std::io::Read;
+use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 
-use backon::{BlockingRetryable, ExponentialBuilder};
+use crate::retry::RetrySetting;
+use backon::{BlockingRetryable, ExponentialBackoff, ExponentialBuilder};
 use bytes::Bytes;
+use derive_setters::Setters;
 use jiff::SignedDuration;
 use log::{trace, warn};
 use reqwest::{
-    Url,
+    Certificate, Identity, IntoUrl, Url,
     blocking::{Client, ClientBuilder},
     header::{HeaderMap, HeaderValue},
 };
-use serde::Deserialize;
-
-use rustic_core::{ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult, WriteBackend};
+use rustic_core::{
+    ErrorKind, FileType, Id, ReadBackend, RepositoryConfig, RusticError, RusticResult, WriteBackend,
+};
+use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, serde_as};
 
 /// joining URL failed on: `{0}`
 #[derive(thiserror::Error, Clone, Copy, Debug, displaydoc::Display)]
@@ -28,6 +35,9 @@ pub(super) mod constants {
     /// Default timeout for the client
     /// This is set to 10 minutes
     pub(super) const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
+
+    /// Default User Agent
+    pub(super) const USER_AGENT: &'static str = "rustic";
 }
 
 fn construct_backoff_error(err: reqwest::Error) -> Box<RusticError> {
@@ -38,58 +48,224 @@ fn construct_backoff_error(err: reqwest::Error) -> Box<RusticError> {
     )
 }
 
-fn read_file_contents(log_name: &str, path: &str) -> RusticResult<Vec<u8>> {
-    let mut buf = Vec::new();
-    let _ = std::fs::File::open(path)
+fn read_file_contents(log_name: &'static str, path: impl AsRef<Path>) -> RusticResult<String> {
+    let mut buf = String::new();
+    let _ = std::fs::File::open(path.as_ref())
         .map_err(|err| {
             RusticError::with_source(
                 ErrorKind::InvalidInput,
                 "Cannot open {log_name} `{path}`",
                 err,
             )
-            .attach_context("path", path)
+            .attach_context("path", path.as_ref().to_string_lossy())
             .attach_context("log_name", log_name)
         })?
-        .read_to_end(&mut buf)
+        .read_to_string(&mut buf)
         .map_err(|err| {
             RusticError::with_source(
                 ErrorKind::InvalidInput,
                 "Cannot read {log_name} `{path}`",
                 err,
             )
-            .attach_context("path", path)
+            .attach_context("path", path.as_ref().to_string_lossy())
             .attach_context("log_name", log_name)
         })?;
     Ok(buf)
 }
+//
+// fn get_ca_cert(path: impl AsRef<Path>) -> RusticResult<reqwest::Certificate> {
+//     let buf = read_file_contents("cacert", path.as_ref())?;
+//     reqwest::Certificate::from_pem(&buf).map_err(|err| {
+//         RusticError::with_source(
+//             ErrorKind::InvalidInput,
+//             "Cannot parse cacert `{value}`",
+//             err,
+//         )
+//         .attach_context("value", path.as_ref())
+//     })
+// }
+//
+// fn get_tls_client_cert(path: impl AsRef<Path>) -> RusticResult<reqwest::Identity> {
+//     let buf = read_file_contents("tls-client-cert", path.as_ref())?;
+//     reqwest::Identity::from_pem(&buf).map_err(|err| {
+//         RusticError::with_source(
+//             ErrorKind::InvalidInput,
+//             "Cannot parse tls-client-cert `{value}`",
+//             err,
+//         )
+//         .attach_context("value", path.as_ref())
+//     })
+// }
 
-fn get_cacert(value: &str) -> RusticResult<reqwest::Certificate> {
-    let buf = read_file_contents("cacert", value)?;
-    reqwest::Certificate::from_pem(&buf).map_err(|err| {
-        RusticError::with_source(
-            ErrorKind::InvalidInput,
-            "Cannot parse cacert `{value}`",
-            err,
-        )
-        .attach_context("value", value)
-    })
+fn map_duration(d: &SignedDuration) -> Duration {
+    let secs = (d.subsec_millis().unsigned_abs() as u64).saturating_mul(1000);
+    let nanos = d.subsec_nanos().unsigned_abs();
+    Duration::new(secs, nanos)
 }
 
-fn get_tls_client_cert(value: &str) -> RusticResult<reqwest::Identity> {
-    let buf = read_file_contents("tls-client-cert", value)?;
-    reqwest::Identity::from_pem(&buf).map_err(|err| {
-        RusticError::with_source(
-            ErrorKind::InvalidInput,
-            "Cannot parse tls-client-cert `{value}`",
-            err,
-        )
-        .attach_context("value", value)
-    })
+#[serde_as]
+#[cfg_attr(feature = "clap", derive(clap::Parser))]
+#[cfg_attr(feature = "merge", derive(conflate::Merge))]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Setters)]
+#[serde(rename_all = "kebab-case")]
+#[setters(into)]
+#[non_exhaustive]
+pub struct RestConfig {
+    /// The [`Url`] of the REST backend.
+    #[serde_as(as = "DisplayFromStr")]
+    #[setters(skip)]
+    url: Url,
+
+    /// Enable jitter for the backoff.
+    ///
+    /// # Notes
+    ///
+    /// When jitter is enabled, [`ExponentialBackoff`] will add a random jitter within `(0, current_delay)`
+    /// to the current delay.
+    jitter: Option<bool>,
+
+    /// Set the factor for the backoff.
+    ///
+    /// # Notes
+    ///
+    /// Having a factor less than `1.0` does not make any sense as it would create a
+    /// smaller negative backoff.
+    factor: Option<f32>,
+
+    /// Set the minimum delay for the backoff.
+    min_delay: Option<SignedDuration>,
+
+    /// Set the maximum delay for the backoff.
+    max_delay: Option<SignedDuration>,
+
+    /// Set the maximum number of attempts for the current backoff.
+    #[serde_as(as = "DisplayFromStr")]
+    retry: RetrySetting,
+
+    /// Set the total timeout.
+    timeout: Option<SignedDuration>,
+
+    /// Sets the User-Agent of the REST backend.
+    user_agent: Option<String>,
+
+    /// Sets the CA Root [`Certificate`] of the REST backend.
+    #[serde(alias = "ca_cert", alias = "cacert")]
+    #[serde(rename = "cacert")]
+    #[setters(skip)]
+    ca_cert: Option<String>,
+
+    /// Sets the TLS Client [`Identity`] of the REST backend.
+    #[setters(skip)]
+    tls_client_cert: Option<String>,
+}
+
+impl RestConfig {
+    pub fn new(url: &Url) -> Self {
+        Self {
+            url: url.clone(),
+            jitter: None,
+            factor: None,
+            min_delay: None,
+            max_delay: None,
+            retry: RetrySetting::Default,
+            timeout: None,
+            user_agent: None,
+            ca_cert: None,
+            tls_client_cert: None,
+        }
+    }
+
+    //noinspection DuplicatedCode
+    pub fn from_iter<K, V, I>(url: impl AsRef<str>, dict: I) -> RusticResult<Self>
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        let mut map: HashMap<String, String> = dict
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+
+        // inject scheme so serde can populate it
+        map.insert("url".to_string(), url.as_ref().to_string());
+
+        let config: Self = serde_json::to_value(map)
+            .and_then(serde_json::from_value)
+            .map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::Configuration,
+                    "Failed to deserialize OpenDAL config",
+                    err,
+                )
+            })?;
+
+        Ok(config)
+    }
+
+    pub fn ca_cert(mut self, cert: impl Into<Option<String>>) -> Self {
+        self.ca_cert = cert.into();
+        self
+    }
+
+    /// Retrieves the CA Root [`Certificate`] from a local file.
+    ///
+    /// # Arguments
+    /// * `path` - The [`Path`] to read from.
+    ///
+    /// # Errors
+    /// * If the [`Path`] does not exist.
+    /// * If the file is not a valid CA [`Certificate`].
+    ///
+    /// # Notes
+    /// The file does not need to exist after success. The contents will be dumped.
+    pub fn ca_cert_file(mut self, path: impl AsRef<Path>) -> RusticResult<Self> {
+        self.ca_cert = Some(read_file_contents("cacert", path)?);
+        Ok(self)
+    }
+
+    /// Retrieves the TLS Client [`Identity`] from a local file.
+    ///
+    /// # Arguments
+    /// * `path` - The [`Path`] to read from.
+    ///
+    /// # Errors
+    /// * If the [`Path`] does not exist.
+    /// * If the file is not a valid TLS Client [`Identity`]
+    ///
+    /// # Notes
+    /// The file does not need to exist after success. The contents will be dumped.
+    pub fn tls_client_file(mut self, path: impl AsRef<Path>) -> RusticResult<Self> {
+        self.tls_client_cert = Some(read_file_contents("tls-client-cert", path)?);
+        Ok(self)
+    }
+
+    pub fn tls_client_cert(mut self, cert: impl Into<Option<String>>) -> Self {
+        self.tls_client_cert = cert.into();
+        self
+    }
+}
+
+impl RepositoryConfig for RestConfig {
+    fn get_path(&self) -> String {
+        format!("rest:{}", self.url.to_string())
+    }
+
+    fn get_options(&self) -> HashMap<String, String> {
+        let mut ret = crate::struct_to_map(&self);
+        ret.remove("url");
+        ret
+    }
+
+    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
+        let ret = RestBackend::new(&self)?;
+        Ok(Arc::new(ret))
+    }
 }
 
 /// A backend implementation that uses REST to access the backend.
 #[derive(Clone, Debug)]
-pub struct RestBackend {
+pub(crate) struct RestBackend {
     /// The url of the backend.
     url: Url,
     /// The client to use.
@@ -135,84 +311,74 @@ impl RestBackend {
     ///
     /// * If the url could not be parsed.
     /// * If the client could not be built.
-    pub fn new(
-        url: impl AsRef<str>,
-        options: impl IntoIterator<Item = (String, String)>,
-    ) -> RusticResult<Self> {
-        let url = url.as_ref().to_string();
+    pub(crate) fn new(config: &RestConfig) -> RusticResult<Self> {
+        let user_agent = config
+            .user_agent
+            .clone()
+            .unwrap_or(constants::USER_AGENT.to_string())
+            .parse()
+            .map_err(|err| {
+                RusticError::with_source(ErrorKind::Configuration, "User Agent is not valid", err)
+            })?;
 
-        let url = if url.ends_with('/') {
-            url
-        } else {
-            // add a trailing '/' if there is none
-            let mut url = url;
-            url.push('/');
-            url
-        };
+        let max_delay = config.max_delay.as_ref().map(map_duration).unwrap_or(Duration::MAX);
+        let max_times = config.retry.get_setting(constants::DEFAULT_RETRY);
 
-        let url = Url::parse(&url).map_err(|err| {
-            RusticError::with_source(ErrorKind::InvalidInput, "URL `{url}` parsing failed", err)
-                .attach_context("url", url)
-        })?;
-
-        let mut headers = HeaderMap::new();
-        _ = headers.insert("User-Agent", HeaderValue::from_static("rustic"));
-
-        // set default timeout to 10 minutes (we can have *large* packfiles)
-        let mut timeout = constants::DEFAULT_TIMEOUT;
-
-        let mut client_builder = ClientBuilder::new().default_headers(headers);
-
-        // backon doesn't allow us to specify `None` for `max_delay`
-        // see <https://github.com/Xuanwo/backon/pull/160>
         let mut backoff = ExponentialBuilder::default()
-            .with_max_delay(Duration::MAX) // no maximum elapsed time; we count number of retries
-            .with_max_times(constants::DEFAULT_RETRY);
+            .with_max_delay(max_delay) // no maximum elapsed time; we count number of retries
+            .with_max_times(max_times);
 
-        // FIXME: If we have multiple times the same option, this could lead to unexpected behavior
-        for (option, value) in options {
-            if option == "retry" {
-                let max_retries = match value.as_str() {
-                    "false" | "off" => 0,
-                    "default" => constants::DEFAULT_RETRY,
-                    _ => usize::from_str(&value).map_err(|err| {
-                        RusticError::with_source(
-                            ErrorKind::InvalidInput,
-                            "Cannot parse value `{value}`, invalid value for option `{option}`.",
-                            err,
-                        )
-                        .attach_context("value", value)
-                        .attach_context("option", "retry")
-                    })?,
-                };
-                backoff = backoff.with_max_times(max_retries);
-            } else if option == "timeout" {
-                timeout = SignedDuration::from_str(&value).map_err(|err| {
-                    RusticError::with_source(
-                        ErrorKind::InvalidInput,
-                        "Could not parse value `{value}` as duration. Invalid value for option `{option}`.",
-                        err,
-                    )
-                    .attach_context("value", value)
-                    .attach_context("option", "timeout")
-                })?.try_into()
-                // ignore conversation errors, but print out warning
-                .inspect_err(|err| warn!("cannot use timeout: {err}"))
-                .unwrap_or_default();
-            } else if option == "cacert" {
-                client_builder = client_builder.add_root_certificate(get_cacert(&value)?);
-            } else if option == "tls-client-cert" {
-                client_builder = client_builder.identity(get_tls_client_cert(&value)?);
-            }
+        if config.jitter.is_some_and(|x| x) {
+            backoff = backoff.with_jitter();
+        }
+        if let Some(x) = config.factor {
+            backoff = backoff.with_factor(x);
+        }
+        if let Some(ref x) = config.min_delay {
+            backoff = backoff.with_min_delay(map_duration(x));
+        }
+        if let Some(ref x) = config.timeout {
+            backoff = backoff.with_total_delay(Some(map_duration(x)));
         }
 
-        let client = client_builder.timeout(timeout).build().map_err(|err| {
-            RusticError::with_source(ErrorKind::Backend, "Failed to build HTTP client", err)
-        })?;
+        // Next, initialize the HTTP client with the given backoff.
+        let mut headers = HeaderMap::new();
+        _ = headers.insert("User-Agent", user_agent);
+        let mut client_builder = ClientBuilder::new().default_headers(headers);
+
+        if let Some(ref x) = config.ca_cert {
+            let cert = Certificate::from_pem(x.as_bytes()).map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::InvalidInput,
+                    "Cannot parse cacert `{value}`",
+                    err,
+                )
+                .attach_context("value", x)
+            })?;
+            client_builder = client_builder.add_root_certificate(cert);
+        }
+
+        if let Some(ref x) = config.tls_client_cert {
+            let cert = Identity::from_pem(x.as_bytes()).map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::InvalidInput,
+                    "Cannot parse tls-client-cert `{value}`",
+                    err,
+                )
+                .attach_context("value", x)
+            })?;
+            client_builder = client_builder.identity(cert);
+        }
+
+        if let Some(x) = config.timeout {
+            client_builder = client_builder.timeout(map_duration(&x));
+        }
 
         Ok(Self {
-            url,
-            client,
+            url: config.url.clone(),
+            client: client_builder.build().map_err(|err| {
+                RusticError::with_source(ErrorKind::Backend, "Failed to build HTTP client", err)
+            })?,
             backoff,
         })
     }

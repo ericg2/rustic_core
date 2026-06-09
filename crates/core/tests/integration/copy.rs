@@ -3,7 +3,7 @@ use std::{path::PathBuf, str::FromStr};
 use anyhow::Result;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
-
+use rustic_backend::local::LocalSource;
 use rustic_core::{BackupOptions, CheckOptions, CopySnapshot, repofile::SnapshotFile};
 
 use super::{RepoOpen, TestSource, set_up_repo, tar_gz_testdata};
@@ -22,7 +22,8 @@ fn test_copy(tar_gz_testdata: Result<TestSource>, set_up_repo: Result<RepoOpen>)
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
 
     // first backup
-    let snap = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let src = LocalSource::new(paths);
+    let snap = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // re-read index
     let repo = repo.to_indexed()?;

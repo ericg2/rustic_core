@@ -126,23 +126,20 @@ pub mod vfs;
 
 // re-export jiff
 pub use jiff;
-
 // rustic_core Public API
 pub use crate::{
     backend::{
-        ALL_FILE_TYPES, FileType, ReadBackend, ReadSource, ReadSourceEntry, ReadSourceOpen,
-        RepositoryBackends, WriteBackend,
-        childstdout::ChildStdoutSource,
+        ALL_FILE_TYPES, FileType, ReadBackend, ReadSource, ReadSourceBuilder, ReadSourceEntry,
+        ReadFileOpen, RepositoryBackends, RepositoryConfig, WriteBackend, DestinationBuilder,
         decrypt::{compression_level_range, max_compression_level},
-        ignore::{LocalSource, LocalSourceFilterOptions, LocalSourceSaveOptions},
-        local_destination::LocalDestination,
+        dest::Destination,
+        filters::FilterOptions,
         node::{
-            last_modified_node,
+            ExtendedAttribute, Metadata, Node, NodeType, last_modified_node,
             modification::{
                 BlockdevOption, DevIdOption, NodeModification, TimeOption, XattrOption,
             },
         },
-        stdin::StdinSource,
     },
     blob::{
         BlobId, DataId, PackedId,

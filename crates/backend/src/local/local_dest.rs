@@ -3,15 +3,19 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 
 use std::{
     fs::{self, File, OpenOptions},
+    io,
     io::{Read, Seek, SeekFrom, Write},
     num::TryFromIntError,
     path::{Path, PathBuf},
 };
 
+use crate::local::local_src::LocalReader;
+use crate::local::mapper::LocalSaveOptions;
 use bytes::Bytes;
+use derive_setters::Setters;
 use filetime::{FileTime, set_symlink_file_times};
-#[cfg(not(windows))]
-use log::warn;
+use jiff::Timestamp;
+use log::{debug, warn};
 #[cfg(not(windows))]
 use nix::errno::Errno;
 #[cfg(not(windows))]
@@ -21,15 +25,13 @@ use nix::{
     fcntl::{AT_FDCWD, AtFlags},
     unistd::{Gid, Uid, fchownat},
 };
-
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+use rustic_core::repofile::{Metadata, Node};
+use rustic_core::{Destination, ErrorKind, Excludes, ExtendedAttribute, FilterOptions, NodeType, ReadSourceBuilder, RestoreOptions, RusticError, RusticResult};
+use crate::local::LocalSource;
 #[cfg(not(windows))]
-use crate::backend::ignore::mapper::nix_mapper::map_mode_from_go;
-#[cfg(not(windows))]
-use crate::backend::node::NodeType;
-use crate::{
-    backend::node::{ExtendedAttribute, Metadata, Node},
-    error::{ErrorKind, RusticError, RusticResult},
-};
+use crate::local::mapper::nix_mapper::map_mode_from_go;
 
 #[cfg(not(windows))]
 mod helpers {
@@ -63,8 +65,7 @@ mod helpers {
 pub enum LocalDestinationErrorKind {
     /// directory creation failed: `{0:?}`
     DirectoryCreationFailed(std::io::Error),
-    /// file `{0:?}` should have a parent
-    FileDoesNotHaveParent(PathBuf),
+
     #[cfg(any(
         target_os = "macos",
         target_os = "openbsd",
@@ -142,139 +143,233 @@ pub enum LocalDestinationErrorKind {
 
 pub(crate) type LocalDestinationResult<T> = Result<T, LocalDestinationErrorKind>;
 
-#[derive(Clone, Debug)]
 /// Local destination, used when restoring.
+#[serde_as]
+#[cfg_attr(feature = "clap", derive(clap::Parser))]
+#[cfg_attr(feature = "merge", derive(conflate::Merge))]
+#[derive(Clone, Debug, Setters, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[setters(into)]
+#[non_exhaustive]
 pub struct LocalDestination {
     /// The base path of the destination.
+    #[setters(skip)]
     path: PathBuf,
-    /// Whether we expect a single file as destination.
-    is_file: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct LocalWriter {
+    dest: LocalDestination,
+}
+
+impl LocalWriter {
+    pub fn new(dest: impl Into<LocalDestination>) -> RusticResult<Self> {
+        Ok(Self {
+            dest: dest.into(),
+        })
+    }
+}
+
+impl Destination for LocalDestination {
+    type Reader = LocalReader;
+
+    fn path(&self, path: &Path) -> PathBuf {
+        crate::join_force(&self.path, path)
+    }
+
+    fn read_source(&self) -> RusticResult<Self::Reader> {
+        LocalSource::new(&self.path).get_reader()
+    }
+
+    fn remove_dir(&self, path: &Path) -> RusticResult<()> {
+        let path = &self.path(path);
+        fs::remove_dir_all(path).map_err(|err| {
+            RusticError::with_source(ErrorKind::Backend, "Failed to remove directory", err)
+        })?;
+        Ok(())
+    }
+
+    fn remove_file(&self, path: &Path) -> RusticResult<()> {
+        let path = &self.path(path);
+        fs::remove_file(path).map_err(|err| {
+            RusticError::with_source(ErrorKind::Backend, "Failed to remove file", err)
+        })?;
+        Ok(())
+    }
+
+    fn create_dir_all(&self, path: &Path) -> RusticResult<()> {
+        let path = &self.path(path);
+        fs::create_dir_all(path).map_err(|err| {
+            RusticError::with_source(ErrorKind::Backend, "Failed to create directory", err)
+        })?;
+        Ok(())
+    }
+
+    fn set_restore_metadata(
+        &self,
+        path: &Path,
+        node: &Node,
+        opts: &RestoreOptions,
+    ) -> RusticResult<()> {
+        // This does not use 'self.path()' due to all self.X functions already doing it.
+        debug!("setting metadata for {}", path.display());
+        self.create_special(path, node)
+            .unwrap_or_else(|_| warn!("restore {}: creating special file failed.", path.display()));
+        match (opts.no_ownership, opts.numeric_id) {
+            (true, _) => {}
+            (false, true) => self
+                .set_uid_gid(path, &node.meta)
+                .unwrap_or_else(|_| warn!("restore {}: setting UID/GID failed.", path.display())),
+            (false, false) => self.set_user_group(path, &node.meta).unwrap_or_else(|_| {
+                warn!("restore {}: setting User/Group failed.", path.display())
+            }),
+        }
+        self.set_permission(path, node)
+            .unwrap_or_else(|_| warn!("restore {}: chmod failed.", path.display()));
+        self.set_extended_attributes(path, &node.meta.extended_attributes)
+            .unwrap_or_else(|_| {
+                warn!(
+                    "restore {}: setting extended attributes failed.",
+                    path.display()
+                );
+            });
+        self.set_times(path, &node.meta)
+            .unwrap_or_else(|_| warn!("restore {}: setting file times failed.", path.display()));
+        Ok(())
+    }
+
+    fn set_length(&self, path: &Path, size: u64) -> RusticResult<()> {
+        let filename = self.path(path);
+        let ret = (|| -> io::Result<()> {
+            OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(filename)?
+                .set_len(size)?;
+            Ok(())
+        })();
+        ret.map_err(|err| {
+            RusticError::with_source(ErrorKind::Backend, "Failed to set length of file", err)
+        })
+    }
+
+    fn read_exact(&self, path: &Path, offset: u64, length: u64) -> RusticResult<Bytes> {
+        let filename = self.path(path);
+        let ret = (|| -> io::Result<Bytes> {
+            let mut vec = vec![0; length as usize];
+            let mut file = File::open(filename)?;
+            let _ = file.seek(SeekFrom::Start(offset))?;
+            file.read_exact(&mut vec)?;
+            Ok(Bytes::from(vec))
+        })();
+        ret.map_err(|err| RusticError::with_source(ErrorKind::Backend, "Failed to read file", err))
+    }
+
+    fn get_existing(&self, path: &Path) -> RusticResult<Option<Metadata>> {
+        let filename = self.path(path);
+        let meta = match fs::symlink_metadata(&filename) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => {
+                return Err(RusticError::with_source(
+                    ErrorKind::Backend,
+                    "Failed to read metadata",
+                    err,
+                ));
+            }
+        };
+
+        let ret = Metadata {
+            mode: None,
+            mtime: meta
+                .modified()
+                .ok()
+                .and_then(|x| Timestamp::try_from(x).ok()),
+            atime: meta
+                .accessed()
+                .ok()
+                .and_then(|x| Timestamp::try_from(x).ok()),
+            ctime: meta
+                .created()
+                .ok()
+                .and_then(|x| Timestamp::try_from(x).ok()),
+            uid: None,
+            gid: None,
+            user: None,
+            group: None,
+            inode: 0,
+            device_id: 0,
+            size: meta.len(),
+            links: 0,
+            extended_attributes: vec![],
+        };
+
+        Ok(Some(ret))
+    }
+
+    fn write_at(&self, path: &Path, offset: u64, data: &[u8]) -> RusticResult<()> {
+        let filename = self.path(path);
+        let ret = (|| -> io::Result<()> {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(filename)?;
+
+            let _ = file.seek(SeekFrom::Start(offset))?;
+            file.write_all(data)?;
+            Ok(())
+        })();
+        ret.map_err(|err| RusticError::with_source(ErrorKind::Backend, "Failed to write file", err))
+    }
+
+    fn hard_link(&self, source_item: &Path, item: &Path) -> RusticResult<()> {
+        let source_path = self.path(source_item);
+        let filename = self.path(item);
+        let ret = (|| -> io::Result<()> {
+            fs::hard_link(&source_path, &filename)?;
+            Ok(())
+        })();
+        ret.map_err(|err| RusticError::with_source(ErrorKind::Backend, "Failed to hard link", err))
+    }
+
+    fn append(&self, path: &Path, data: &[u8]) -> RusticResult<()> {
+        let filename = self.path(path);
+        let ret = (|| -> io::Result<()> {
+            let mut file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(filename)?;
+            file.write_all(data)?;
+            Ok(())
+        })();
+        ret.map_err(|err| RusticError::with_source(ErrorKind::Backend, "Failed to append", err))
+    }
+
+    fn can_random_write(&self) -> bool {
+        true
+    }
+
+    fn can_hard_link(&self) -> bool {
+        true
+    }
 }
 
 impl LocalDestination {
-    /// Create a new [`LocalDestination`]
+    /// Create a new [`LocalDestination`]. The path will be created if not existing.
     ///
     /// # Arguments
     ///
     /// * `path` - The base path of the destination
-    /// * `create` - If `create` is true, create the base path if it doesn't exist.
-    /// * `expect_file` - Whether we expect a single file as destination.
     ///
     /// # Errors
     ///
     /// * If the directory could not be created.
-    // TODO: We should use `impl Into<Path/PathBuf>` here. we even use it in the body!
-    pub fn new(path: &str, create: bool, expect_file: bool) -> RusticResult<Self> {
-        let is_dir = path.ends_with('/');
-        let path: PathBuf = path.into();
-        let is_file = path.is_file() || (!path.is_dir() && !is_dir && expect_file);
-
-        // FIXME: Refactor logic to avoid duplication
-        if create {
-            if is_file {
-                if let Some(path) = path.parent() {
-                    fs::create_dir_all(path).map_err(|err| {
-                        RusticError::with_source(
-                            ErrorKind::InputOutput,
-                            "The directory `{path}` could not be created.",
-                            err,
-                        )
-                        .attach_context("path", path.display().to_string())
-                    })?;
-                }
-            } else {
-                fs::create_dir_all(&path).map_err(|err| {
-                    RusticError::with_source(
-                        ErrorKind::InputOutput,
-                        "The directory `{path}` could not be created.",
-                        err,
-                    )
-                    .attach_context("path", path.display().to_string())
-                })?;
-            }
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().to_path_buf(),
         }
-
-        Ok(Self { path, is_file })
-    }
-
-    /// Path to the given item (relative to the base path)
-    ///
-    /// # Arguments
-    ///
-    /// * `item` - The item to get the path for
-    ///
-    /// # Returns
-    ///
-    /// The path to the item.
-    ///
-    /// # Notes
-    ///
-    /// * If the destination is a file, this will return the base path.
-    /// * If the destination is a directory, this will return the base path joined with the item.
-    pub(crate) fn path(&self, item: impl AsRef<Path>) -> PathBuf {
-        if self.is_file {
-            self.path.clone()
-        } else {
-            self.path.join(item)
-        }
-    }
-
-    /// Remove the given directory (relative to the base path)
-    ///
-    /// # Arguments
-    ///
-    /// * `dirname` - The directory to remove
-    ///
-    /// # Errors
-    ///
-    /// * If the directory could not be removed.
-    ///
-    /// # Notes
-    ///
-    /// This will remove the directory recursively.
-    #[allow(clippy::unused_self)]
-    pub(crate) fn remove_dir(&self, dirname: impl AsRef<Path>) -> LocalDestinationResult<()> {
-        fs::remove_dir_all(dirname).map_err(LocalDestinationErrorKind::DirectoryRemovalFailed)
-    }
-
-    /// Remove the given file (relative to the base path)
-    ///
-    /// # Arguments
-    ///
-    /// * `filename` - The file to remove
-    ///
-    /// # Errors
-    ///
-    /// * If the file could not be removed.
-    ///
-    /// # Notes
-    ///
-    /// This will remove the file.
-    ///
-    /// * If the file is a symlink, the symlink will be removed, not the file it points to.
-    /// * If the file is a directory or device, this will fail.
-    #[allow(clippy::unused_self)]
-    pub(crate) fn remove_file(&self, filename: impl AsRef<Path>) -> LocalDestinationResult<()> {
-        fs::remove_file(filename).map_err(LocalDestinationErrorKind::FileRemovalFailed)
-    }
-
-    /// Create the given directory (relative to the base path)
-    ///
-    /// # Arguments
-    ///
-    /// * `item` - The directory to create
-    ///
-    /// # Errors
-    ///
-    /// * If the directory could not be created.
-    ///
-    /// # Notes
-    ///
-    /// This will create the directory structure recursively.
-    pub(crate) fn create_dir(&self, item: impl AsRef<Path>) -> LocalDestinationResult<()> {
-        let dirname = self.path.join(item);
-        fs::create_dir_all(dirname).map_err(LocalDestinationErrorKind::DirectoryCreationFailed)?;
-        Ok(())
     }
 
     /// Set changed and modified times for `item` (relative to the base path) utilizing the file metadata
@@ -292,7 +387,7 @@ impl LocalDestination {
         item: impl AsRef<Path>,
         meta: &Metadata,
     ) -> LocalDestinationResult<()> {
-        let filename = self.path(item);
+        let filename = self.path(item.as_ref());
         if let Some(mtime) = meta.mtime {
             let atime = meta.atime.unwrap_or(mtime);
             set_symlink_file_times(
@@ -567,46 +662,6 @@ impl LocalDestination {
         Ok(())
     }
 
-    /// Set length of `item` (relative to the base path)
-    ///
-    /// # Arguments
-    ///
-    /// * `item` - The item to set the length for
-    /// * `size` - The size to set the length to
-    ///
-    /// # Errors
-    ///
-    /// * If the file does not have a parent.
-    /// * If the directory could not be created.
-    /// * If the file could not be opened.
-    /// * If the length of the file could not be set.
-    ///
-    /// # Notes
-    ///
-    /// If the file exists, truncate it to the given length. (TODO: check if this is correct)
-    /// If it doesn't exist, create a new (empty) one with given length.
-    pub(crate) fn set_length(
-        &self,
-        item: impl AsRef<Path>,
-        size: u64,
-    ) -> LocalDestinationResult<()> {
-        let filename = self.path(item);
-        let dir = filename
-            .parent()
-            .ok_or_else(|| LocalDestinationErrorKind::FileDoesNotHaveParent(filename.clone()))?;
-        fs::create_dir_all(dir).map_err(LocalDestinationErrorKind::DirectoryCreationFailed)?;
-
-        OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(filename)
-            .map_err(LocalDestinationErrorKind::OpeningFileFailed)?
-            .set_len(size)
-            .map_err(LocalDestinationErrorKind::SettingFileLengthFailed)?;
-        Ok(())
-    }
-
     #[cfg(windows)]
     // TODO: Windows support
     /// Create a special file (relative to the base path)
@@ -725,143 +780,6 @@ impl LocalDestination {
             }
             _ => {}
         }
-        Ok(())
-    }
-
-    /// Read the given item (relative to the base path)
-    ///
-    /// # Arguments
-    ///
-    /// * `item` - The item to read
-    /// * `offset` - The offset to read from
-    /// * `length` - The length to read
-    ///
-    /// # Errors
-    ///
-    /// * If the file could not be opened.
-    /// * If the file could not be sought to the given position.
-    /// * If the length of the file could not be converted to u32.
-    /// * If the length of the file could not be read.
-    pub(crate) fn read_at(
-        &self,
-        item: impl AsRef<Path>,
-        offset: u64,
-        length: u64,
-    ) -> LocalDestinationResult<Bytes> {
-        let filename = self.path(item);
-        let mut file =
-            File::open(filename).map_err(LocalDestinationErrorKind::OpeningFileFailed)?;
-        _ = file
-            .seek(SeekFrom::Start(offset))
-            .map_err(LocalDestinationErrorKind::CouldNotSeekToPositionInFile)?;
-        let mut vec = vec![
-            0;
-            length.try_into().map_err(|err| {
-                LocalDestinationErrorKind::LengthConversionFailed {
-                    target: "u8".to_string(),
-                    length,
-                    source: err,
-                }
-            })?
-        ];
-        file.read_exact(&mut vec)
-            .map_err(LocalDestinationErrorKind::ReadingExactLengthOfFileFailed)?;
-        Ok(vec.into())
-    }
-
-    /// Check if a matching file exists.
-    ///
-    /// # Arguments
-    ///
-    /// * `item` - The item to check
-    /// * `size` - The size to check
-    ///
-    /// # Returns
-    ///
-    /// If a file exists and size matches, this returns a `File` open for reading.
-    /// In all other cases, returns `None`
-    pub fn get_matching_file(&self, item: impl AsRef<Path>, size: u64) -> Option<File> {
-        let filename = self.path(item);
-        fs::symlink_metadata(&filename).map_or_else(
-            |_| None,
-            |meta| {
-                if meta.is_file() && meta.len() == size {
-                    File::open(&filename).ok()
-                } else {
-                    None
-                }
-            },
-        )
-    }
-
-    /// Write `data` to given item (relative to the base path) at `offset`
-    ///
-    /// # Arguments
-    ///
-    /// * `item` - The item to write to
-    /// * `offset` - The offset to write at
-    /// * `data` - The data to write
-    ///
-    /// # Errors
-    ///
-    /// * If the file could not be opened.
-    /// * If the file could not be sought to the given position.
-    /// * If the bytes could not be written to the file.
-    ///
-    /// # Notes
-    ///
-    /// This will create the file if it doesn't exist.
-    pub(crate) fn write_at(
-        &self,
-        item: impl AsRef<Path>,
-        offset: u64,
-        data: &[u8],
-    ) -> LocalDestinationResult<()> {
-        let filename = self.path(item);
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(filename)
-            .map_err(LocalDestinationErrorKind::OpeningFileFailed)?;
-        _ = file
-            .seek(SeekFrom::Start(offset))
-            .map_err(LocalDestinationErrorKind::CouldNotSeekToPositionInFile)?;
-        file.write_all(data)
-            .map_err(LocalDestinationErrorKind::CouldNotWriteToBuffer)?;
-        Ok(())
-    }
-
-    /// Create a hardlink `item` pointing to `source_item`, both relative to the base path.
-    ///
-    /// # Arguments
-    ///
-    /// * `source_item` - The already-restored file to link to
-    /// * `item` - The path to create as a hardlink
-    ///
-    /// # Errors
-    ///
-    /// * If the new hardlink does not have a parent directory.
-    /// * If the directory could not be created.
-    /// * If the hardlink could not be created.
-    pub(crate) fn hard_link(
-        &self,
-        source_item: impl AsRef<Path>,
-        item: impl AsRef<Path>,
-    ) -> LocalDestinationResult<()> {
-        let source_path = self.path(source_item);
-        let filename = self.path(item);
-        let dir = filename
-            .parent()
-            .ok_or_else(|| LocalDestinationErrorKind::FileDoesNotHaveParent(filename.clone()))?;
-        fs::create_dir_all(dir).map_err(LocalDestinationErrorKind::DirectoryCreationFailed)?;
-        fs::hard_link(&source_path, &filename).map_err(|err| {
-            LocalDestinationErrorKind::HardLinkingFailed {
-                source_path,
-                filename,
-                source: err,
-            }
-        })?;
         Ok(())
     }
 }

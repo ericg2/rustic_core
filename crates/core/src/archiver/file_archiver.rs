@@ -7,7 +7,7 @@ use crate::{
         tree_archiver::TreeItem,
     },
     backend::{
-        ReadSourceOpen,
+        ReadFileOpen,
         decrypt::DecryptWriteBackend,
         node::{Node, NodeType},
     },
@@ -91,7 +91,7 @@ impl<'a, BE: DecryptWriteBackend, I: ReadGlobalIndex> FileArchiver<'a, BE, I> {
     /// # Returns
     ///
     /// The processed item.
-    pub(crate) fn process<O: ReadSourceOpen>(
+    pub(crate) fn process<O: ReadFileOpen>(
         &self,
         item: ItemWithParent<Option<O>>,
         p: &Progress,

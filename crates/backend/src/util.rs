@@ -1,5 +1,6 @@
+use std::path::Path;
 use crate::SupportedBackend;
-use rustic_core::{ErrorKind, RusticError, RusticResult};
+use rustic_core::{ErrorKind, RusticError, RusticResult, WriteBackend};
 
 /// A backend location. This is a string that represents the location of the backend.
 #[derive(PartialEq, Eq, Debug, Clone)]
@@ -25,6 +26,7 @@ impl std::fmt::Display for BackendLocation {
         Ok(())
     }
 }
+
 
 /// Splits the given url into the backend type and the path.
 ///
@@ -77,7 +79,6 @@ pub fn location_to_type_and_path(
 
 #[cfg(test)]
 mod tests {
-
     #[allow(unused_imports)]
     use rstest::rstest;
 

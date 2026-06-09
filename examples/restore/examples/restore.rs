@@ -1,10 +1,11 @@
 //! `restore` example
 use rustic_backend::BackendOptions;
 use rustic_core::{
-    Credentials, LocalDestination, LsOptions, Repository, RepositoryOptions, RestoreOptions,
+    Credentials, Destination, LsOptions, Repository, RepositoryOptions, RestoreOptions,
 };
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
+use rustic_backend::local::LocalDestination;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Display info logs
@@ -29,11 +30,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let ls = repo.ls(&node, &streamer_opts)?;
 
     let destination = "./restore/"; // restore to this destination dir
-    let create = true; // create destination dir, if it doesn't exist
-    let dest = LocalDestination::new(destination, create, !node.is_dir())?;
-
+    let dest = LocalDestination::new(destination);
     let opts = RestoreOptions::default();
     let dry_run = false;
+    
     // create restore infos. Note: this also already creates needed dirs in the destination
     let restore_infos = repo.prepare_restore(&opts, ls.clone(), &dest, dry_run)?;
 

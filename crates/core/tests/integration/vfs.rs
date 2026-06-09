@@ -5,7 +5,7 @@ use bytes::Bytes;
 use insta::Settings;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
-
+use rustic_backend::local::LocalSource;
 use rustic_core::{BackupOptions, repofile::SnapshotFile, vfs::Vfs};
 
 use super::{
@@ -23,9 +23,10 @@ fn test_vfs(
     let paths = &source.path_list();
 
     // we use as_path to not depend on the actual tempdir
+    let src = LocalSource::new(paths);
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
     // backup test-data
-    let snapshot = repo.backup(&opts, paths, SnapshotFile::default())?;
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // re-read index
     let repo = repo.to_indexed()?;
