@@ -3232,6 +3232,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+
+[[package]]
 name = "path-dedot"
 version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4230,7 +4236,7 @@ dependencies = [
 
 [[package]]
 name = "rustic_backend"
-version = "0.6.2"
+version = "0.7.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -4246,6 +4252,7 @@ dependencies = [
  "filetime",
  "flate2",
  "globset",
+ "heck",
  "hex",
  "ignore",
  "insta",
@@ -4254,6 +4261,7 @@ dependencies = [
  "mockall",
  "nix",
  "opendal",
+ "paste",
  "pretty_assertions",
  "proptest",
  "rand 0.10.1",
@@ -4265,6 +4273,7 @@ dependencies = [
  "rustic_testing",
  "semver",
  "serde",
+ "serde-value",
  "serde_json",
  "serde_with",
  "strum",
@@ -4291,7 +4300,7 @@ version = "0.2.4"
 
 [[package]]
 name = "rustic_core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aes256ctr_poly1305aes",
  "anyhow",

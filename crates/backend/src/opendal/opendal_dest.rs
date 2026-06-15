@@ -1,5 +1,5 @@
 use crate::opendal::opendal_src::OpenDALReader;
-use crate::opendal::{OpenDALBackend, OpenDALSource, OpenDALConfig};
+use crate::opendal::{OpenDALBackend, OpenDALSource, OpenDALRepo};
 use bytes::Bytes;
 use opendal::options::{DeleteOptions, ReadOptions, WriteOptions};
 use opendal::raw::BytesRange;
@@ -25,7 +25,7 @@ pub struct OpenDALDestination {
     root: PathBuf,
 
     #[setters(skip)]
-    config: OpenDALConfig,
+    config: OpenDALRepo,
 }
 
 impl OpenDALDestination {
@@ -33,9 +33,9 @@ impl OpenDALDestination {
     ///
     /// # Arguments
     ///
-    /// * `config` - The [`OpenDALConfig`] to use.
+    /// * `config` - The [`OpenDALRepo`] to use.
     /// * `root` - The base path of the destination
-    pub fn new(config: &OpenDALConfig, root: impl AsRef<Path>) -> Self {
+    pub fn new(config: &OpenDALRepo, root: impl AsRef<Path>) -> Self {
         Self {
             config: config.to_owned(),
             root: root.as_ref().to_path_buf(),

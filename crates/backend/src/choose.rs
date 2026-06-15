@@ -1,6 +1,4 @@
 //! This module contains [`BackendOptions`] and helpers to choose a backend from a given url.
-use derive_setters::Setters;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::{collections::BTreeMap, sync::Arc};
 use strum::{Display, EnumString};
@@ -9,15 +7,12 @@ use rustic_core::{
     ErrorKind, RepositoryBackends, RepositoryConfig, RusticError, RusticResult, WriteBackend,
 };
 
-use crate::util::{BackendLocation, location_to_type_and_path};
+use crate::util::{location_to_type_and_path, BackendLocation};
 
-#[cfg(feature = "opendal")]
-use crate::opendal::OpenDALBackend;
-
-use crate::local::LocalConfig;
-use crate::opendal::OpenDALConfig;
-use crate::rclone::RcloneConfig;
-use crate::rest::RestConfig;
+use crate::local::LocalRepo;
+use crate::opendal::OpenDALRepo;
+use crate::rclone::RcloneRepo;
+use crate::rest::RestRepo;
 #[cfg(feature = "clap")]
 use clap::ValueHint;
 use serde::de::DeserializeOwned;
@@ -62,30 +57,39 @@ pub struct BackendOptions {
 }
 
 impl BackendOptions {
-    #[deprecated = "Use `set_repo` instead."]
+    /// Adds a [`Repository`] using dynamic types.
     pub fn repository(mut self, repo: impl Into<String>) -> Self {
         self.repository = Some(repo.into());
         self
     }
 
-    #[deprecated = "Use `set_repo_hot` instead."]
+    /// Adds a hot [`Repository`] using dynamic types.
     pub fn repo_hot(mut self, repo: impl Into<String>) -> Self {
         self.repo_hot = Some(repo.into());
         self
     }
 
-    pub fn set_repo(mut self, repo: impl RepositoryConfig) -> Self {
+    /// Adds a [`Repository`] using a typed config.
+    ///
+    /// # Important
+    /// This will automatically set the configuration. Do not use `options`.
+    pub fn with_repo(mut self, repo: impl RepositoryConfig) -> Self {
         self.repository = Some(repo.get_path());
         self.options_cold = repo.get_options().into_iter().collect();
         self
     }
 
-    pub fn set_repo_hot(mut self, repo: impl RepositoryConfig) -> Self {
+    /// Adds a hot [`Repository`] using a typed config.
+    ///
+    /// # Important
+    /// This will automatically set the configuration. Do not use `options`.
+    pub fn with_repo_hot(mut self, repo: impl RepositoryConfig) -> Self {
         self.repository = Some(repo.get_path());
         self.options_hot = repo.get_options().into_iter().collect();
         self
     }
 
+    /// Sets the options for all repositories.
     pub fn options<K, V, I>(mut self, dict: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -99,6 +103,7 @@ impl BackendOptions {
         self
     }
 
+    /// Sets the options for the hot repository.
     pub fn options_hot<K, V, I>(mut self, dict: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -112,6 +117,7 @@ impl BackendOptions {
         self
     }
 
+    /// Sets the options for the cold repository.
     pub fn options_cold<K, V, I>(mut self, dict: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
@@ -246,13 +252,13 @@ impl SupportedBackend {
     ) -> RusticResult<Arc<dyn RepositoryConfig>> {
         let options = options.unwrap_or_default();
         Ok(match self {
-            Self::Local => Arc::new(LocalConfig::from_iter(location, options)?),
+            Self::Local => Arc::new(LocalRepo::from_iter(location, options)?),
             #[cfg(feature = "rclone")]
-            Self::Rclone => Arc::new(RcloneConfig::from_iter(location, options)?),
+            Self::Rclone => Arc::new(RcloneRepo::from_iter(location, options)?),
             #[cfg(feature = "rest")]
-            Self::Rest => Arc::new(RestConfig::from_iter(location, options)?),
+            Self::Rest => Arc::new(RestRepo::from_iter(location, options)?),
             #[cfg(feature = "opendal")]
-            Self::OpenDAL => Arc::new(OpenDALConfig::from_iter(location, options)?),
+            Self::OpenDAL => Arc::new(OpenDALRepo::from_iter(location, options)),
         })
     }
 }
@@ -270,7 +276,6 @@ impl BackendChoice for SupportedBackend {
 
 #[cfg(test)]
 mod tests {
-
     use rstest::rstest;
 
     use super::*;

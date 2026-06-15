@@ -77,28 +77,107 @@ mod filter;
 mod retry;
 mod util;
 
-use std::collections::HashMap;
-use std::path::{Component, Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
 // rustic_backend Public API
 pub use crate::choose::{BackendOptions, SupportedBackend};
 
 // re-export for error handling
 pub use rustic_core::{ErrorKind, RusticError, RusticResult, Severity, Status};
 
-pub(crate) fn struct_to_map<T: Serialize>(value: &T) -> HashMap<String, String> {
-    let v = serde_json::to_value(value).unwrap();
-    let obj = v.as_object().expect("expected struct");
-    obj.iter()
-        .map(|(k, v)| {
-            let val = match v {
-                Value::String(s) => s.clone(),
-                other => other.to_string().trim_matches('"').to_string(),
-            };
-            (k.clone(), val)
-        })
-        .collect()
+pub(crate) fn normalize_value<V: Into<String>>(v: V) -> Value {
+    match v.into().as_str() {
+        "" | "null" | "NULL" | "None" => Value::Null,
+        s => Value::String(s.to_string()),
+    }
+}
+//
+// pub(crate) fn struct_to_map<T: serde::Serialize>(value: &T) -> HashMap<String, String> {
+//     let v = serde_json::to_value(value).unwrap();
+//
+//     let obj = v
+//         .as_object()
+//         .expect("expected struct to serialize into JSON object");
+//
+//     obj.iter()
+//         .map(|(k, v)| {
+//             let s = match v {
+//                 Value::String(s) => s.clone(),
+//                 Value::Number(n) => n.to_string(),
+//                 Value::Bool(b) => b.to_string(),
+//                 Value::Null => String::new(),
+//                 other => other.to_string(),
+//             };
+//
+//             (k.clone(), s)
+//         })
+//         .collect()
+// }
+
+pub(crate) fn struct_to_map<T: serde::Serialize>(value: &T) -> HashMap<String, String> {
+    fn insert_into_key(key: String, v: serde_value::Value, out: &mut HashMap<String, String>) {
+        match v {
+            serde_value::Value::Map(map) => {
+                for (k, v) in map {
+                    if let serde_value::Value::String(k) = k {
+                        insert_into_key(k, v, out);
+                    }
+                }
+            }
+
+            serde_value::Value::Seq(seq) => {
+                for v in seq {
+                    insert_into_key(key.clone(), v, out);
+                }
+            }
+
+            serde_value::Value::Newtype(v) => {
+                insert_into_key(key, *v, out);
+            }
+
+            serde_value::Value::Option(Some(v)) => {
+                insert_into_key(key, *v, out);
+            }
+
+            v => {
+                let s = match v {
+                    serde_value::Value::String(s) => s,
+                    serde_value::Value::Char(c) => c.to_string(),
+                    serde_value::Value::Bool(b) => b.to_string(),
+                    serde_value::Value::U8(n) => n.to_string(),
+                    serde_value::Value::U16(n) => n.to_string(),
+                    serde_value::Value::U32(n) => n.to_string(),
+                    serde_value::Value::U64(n) => n.to_string(),
+                    serde_value::Value::I8(n) => n.to_string(),
+                    serde_value::Value::I16(n) => n.to_string(),
+                    serde_value::Value::I32(n) => n.to_string(),
+                    serde_value::Value::I64(n) => n.to_string(),
+                    serde_value::Value::F32(n) => n.to_string(),
+                    serde_value::Value::F64(n) => n.to_string(),
+                    _ => String::new(),
+                };
+
+                out.insert(key, s);
+            }
+        }
+    }
+
+    let v = serde_value::to_value(value)
+        .expect("failed to serialize struct");
+
+    let mut out = HashMap::new();
+
+    if let serde_value::Value::Map(map) = v {
+        for (k, v) in map {
+            if let serde_value::Value::String(k) = k {
+                insert_into_key(k, v, &mut out);
+            }
+        }
+    }
+
+    out
 }
 
 pub(crate) fn join_force(base: impl AsRef<Path>, p: impl AsRef<Path>) -> PathBuf {
@@ -135,4 +214,3 @@ pub(crate) fn path_to_str(base: impl AsRef<Path>, p: impl AsRef<Path>, is_dir: b
     }
     r.replace("\\", "/") // *** fix for windows-style directories
 }
-

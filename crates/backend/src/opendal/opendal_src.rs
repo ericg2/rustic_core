@@ -1,5 +1,5 @@
 use crate::filter::ExcludeFilter;
-use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALDestination};
+use crate::opendal::{OpenDALBackend, OpenDALRepo, OpenDALDestination};
 
 use log::warn;
 use opendal::blocking::StdReader;
@@ -32,14 +32,14 @@ pub struct OpenDALSource {
     paths: Vec<PathBuf>,
 
     #[setters(skip)]
-    config: OpenDALConfig,
+    config: OpenDALRepo,
 
     excludes: Option<Excludes>,
 }
 
 impl OpenDALSource {
     /// Creates a new [`OpenDALSource`] with the given paths.
-    pub fn new(config: &OpenDALConfig, paths: impl Into<PathList>) -> Self {
+    pub fn new(config: &OpenDALRepo, paths: impl Into<PathList>) -> Self {
         Self {
             paths: paths.into().paths(),
             config: config.to_owned(),

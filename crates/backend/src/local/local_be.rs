@@ -27,7 +27,8 @@ use rustic_core::{
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
-pub struct LocalConfig {
+/// A local [`Repository`].
+pub struct LocalRepo {
     /// The base path of the backend.
     #[setters(skip)]
     path: PathBuf,
@@ -37,7 +38,8 @@ pub struct LocalConfig {
     post_delete_command: Option<String>,
 }
 
-impl LocalConfig {
+impl LocalRepo {
+    /// Creates a new [`LocalRepo`] with the given [`Path`].
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
@@ -46,6 +48,7 @@ impl LocalConfig {
         }
     }
 
+    /// Attempts to create a [`LocalRepo`] with the given iterator.
     pub fn from_iter<K, V, I>(path: impl AsRef<str>, dict: I) -> RusticResult<Self>
     where
         I: IntoIterator<Item = (K, V)>,
@@ -58,8 +61,7 @@ impl LocalConfig {
             .collect();
 
         // inject path so serde can populate it
-        map.insert("path".to_string(), path.as_ref().to_string());
-
+        let _ = map.insert("path".to_string(), path.as_ref().to_string());
         let config: Self = serde_json::to_value(map)
             .and_then(serde_json::from_value)
             .map_err(|err| {
@@ -74,14 +76,14 @@ impl LocalConfig {
     }
 }
 
-impl RepositoryConfig for LocalConfig {
+impl RepositoryConfig for LocalRepo {
     fn get_path(&self) -> String {
         self.path.to_string_lossy().into_owned()
     }
 
     fn get_options(&self) -> HashMap<String, String> {
         let mut ret = crate::struct_to_map(&self);
-        ret.remove("path");
+        let _ = ret.remove("path");
         ret
     }
 
@@ -95,11 +97,11 @@ impl RepositoryConfig for LocalConfig {
 #[derive(Debug)]
 struct LocalBackend {
     /// The base path of the backend.
-    config: LocalConfig,
+    config: LocalRepo,
 }
 
 impl LocalBackend {
-    pub(crate) fn new(config: &LocalConfig) -> RusticResult<Self> {
+    pub(crate) fn new(config: &LocalRepo) -> RusticResult<Self> {
         Ok(Self {
             config: config.clone()
         })
@@ -558,9 +560,7 @@ impl WriteBackend for LocalBackend {
 
         trace!("writing tpe: {:?}, id: {}", &tpe, &id);
         let filename = self.path(tpe, id);
-
         let parent = self.base_path(tpe, id);
-
         // create parent directory if it does not exist
         fs::create_dir_all(&parent)
             .map_err(|err| {

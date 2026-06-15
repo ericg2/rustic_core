@@ -4,6 +4,6 @@ mod local_dest;
 mod mapper;
 
 pub use local_dest::LocalDestination;
-pub use local_be::LocalConfig;
+pub use local_be::LocalRepo;
 pub use local_src::LocalSource;
 pub use mapper::LocalSaveOptions;

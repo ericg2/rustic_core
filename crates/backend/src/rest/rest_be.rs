@@ -110,7 +110,7 @@ fn map_duration(d: &SignedDuration) -> Duration {
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
-pub struct RestConfig {
+pub struct RestRepo {
     /// The [`Url`] of the REST backend.
     #[serde_as(as = "DisplayFromStr")]
     #[setters(skip)]
@@ -159,7 +159,7 @@ pub struct RestConfig {
     tls_client_cert: Option<String>,
 }
 
-impl RestConfig {
+impl RestRepo {
     pub fn new(url: &Url) -> Self {
         Self {
             url: url.clone(),
@@ -246,7 +246,7 @@ impl RestConfig {
     }
 }
 
-impl RepositoryConfig for RestConfig {
+impl RepositoryConfig for RestRepo {
     fn get_path(&self) -> String {
         format!("rest:{}", self.url.to_string())
     }
@@ -311,7 +311,7 @@ impl RestBackend {
     ///
     /// * If the url could not be parsed.
     /// * If the client could not be built.
-    pub(crate) fn new(config: &RestConfig) -> RusticResult<Self> {
+    pub(crate) fn new(config: &RestRepo) -> RusticResult<Self> {
         let user_agent = config
             .user_agent
             .clone()

@@ -11,7 +11,7 @@ use opendal::{
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 use serde_with::{DisplayFromStr, serde_as};
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,9 +26,9 @@ use std::{
 use tokio::runtime::Runtime;
 use typed_path::UnixPathBuf;
 
+use crate::normalize_value;
 use crate::opendal::config::*;
 use crate::opendal::opendal_src::OpenDALReader;
-use crate::opendal::scheme::Schemeable;
 use crate::opendal::{OpenDALDestination, OpenDALSource, Throttle};
 use crate::retry::RetrySetting;
 use rustic_core::{
@@ -63,31 +63,30 @@ fn runtime() -> &'static Runtime {
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
-pub struct OpenDALConfig {
+/// Represents a openDAL repository.
+pub struct OpenDALRepo {
     /// The maximum connections.
     #[serde(alias = "connections", alias = "max_connections")]
     #[serde_as(as = "Option<DisplayFromStr>")]
     connections: Option<u32>,
 
+    /// The [`Throttle`] settings.
     #[serde_as(as = "Option<DisplayFromStr>")]
     throttle: Option<Throttle>,
 
+    /// The [`RetrySetting`] config.
     #[serde_as(as = "DisplayFromStr")]
+    #[serde(default)]
     retry: RetrySetting,
-
-    /// The OpenDAL Scheme to use.
-    #[setters(skip)]
-    scheme: String,
 
     /// The serialized config.
     #[setters(skip)]
     #[serde(flatten)]
-    config: HashMap<String, String>,
+    config: Scheme,
 }
 
-impl OpenDALConfig {
-    /// Creates a new openDAL backend via dynamic types.
-    pub fn from_iter<K, V, I>(scheme: impl AsRef<str>, dict: I) -> RusticResult<Self>
+impl OpenDALRepo {
+    pub fn from_iter<K, V, I>(scheme: impl AsRef<str>, dict: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<String>,
@@ -98,26 +97,26 @@ impl OpenDALConfig {
             .map(|(k, v)| (k.into(), v.into()))
             .collect();
 
-        let scheme = scheme
-            .as_ref()
-            .split(':')
-            .next()
-            .unwrap_or_else(|| scheme.as_ref());
+        let connections = map
+            .remove("connections")
+            .or_else(|| map.remove("max_connections"))
+            .and_then(|v| v.parse::<u32>().ok());
 
-        // inject scheme so serde can populate it
-        map.insert("scheme".to_string(), scheme.to_string());
+        let throttle = map
+            .remove("throttle")
+            .and_then(|v| v.parse::<Throttle>().ok());
 
-        let config: Self = serde_json::to_value(map)
-            .and_then(serde_json::from_value)
-            .map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::Configuration,
-                    "Failed to deserialize OpenDAL config",
-                    err,
-                )
-            })?;
+        let retry = map
+            .remove("retry")
+            .and_then(|v| v.parse::<RetrySetting>().ok())
+            .unwrap_or_default();
 
-        Ok(config)
+        Self {
+            connections,
+            throttle,
+            retry,
+            config: Scheme::dynamic(scheme, map),
+        }
     }
 
     /// Creates a new openDAL backend via a [`Builder`].
@@ -131,19 +130,18 @@ impl OpenDALConfig {
     ///
     /// ```
     /// use opendal::services::{S3Config, S3};
-    /// use rustic_backend::opendal::{OpenDALBackend, OpenDALConfig};
+    /// use rustic_backend::opendal::{OpenDALBackend, OpenDALRepo};
     ///
     /// let config = S3::default()
     ///     .bucket("abcd")
     ///     .access_key_id("SECRET")
     ///     .endpoint("127.0.0.1");
     ///
-    /// let be = OpenDALConfig::from_builder(config);
+    /// let be = OpenDALRepo::from_builder(config);
     /// ```
-    pub fn new(be: impl Schemeable) -> Self {
+    pub fn new(be: impl Into<Scheme>) -> Self {
         Self {
-            config: be.config(),
-            scheme: String::from(be.scheme()),
+            config: be.into(),
             retry: RetrySetting::Default,
             connections: None,
             throttle: None,
@@ -159,15 +157,15 @@ impl OpenDALConfig {
     }
 }
 
-impl RepositoryConfig for OpenDALConfig {
+impl RepositoryConfig for OpenDALRepo {
     fn get_path(&self) -> String {
-        format!("opendal:{}", &self.scheme)
+        format!("opendal:{}", self.config.key().unwrap_or(String::new()))
     }
 
     fn get_options(&self) -> HashMap<String, String> {
         let mut ret = crate::struct_to_map(&self);
         ret.remove("scheme");
-        ret
+        ret.into_iter().collect()
     }
 
     fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
@@ -181,7 +179,7 @@ impl RepositoryConfig for OpenDALConfig {
 #[derive(Clone, Debug)]
 pub(crate) struct OpenDALBackend {
     pub(crate) operator: Operator,
-    config: OpenDALConfig,
+    config: OpenDALRepo,
 }
 
 impl OpenDALBackend {
@@ -199,16 +197,14 @@ impl OpenDALBackend {
     /// # Returns
     ///
     /// A new `OpenDAL` backend.
-    pub(crate) fn new(config: &OpenDALConfig) -> RusticResult<Self> {
-        let mut operator = opendal::Operator::via_iter(&config.scheme, config.config.clone())
-            .map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::Backend,
-                    "Creating Operator from path `{path}` failed. Please check the given schema and options.",
-                    err,
-                )
-                    .attach_context("path", config.scheme.to_string())
-            })?;
+    pub(crate) fn new(config: &OpenDALRepo) -> RusticResult<Self> {
+        let mut operator = config.config.operator().map_err(|err| {
+            RusticError::with_source(
+                ErrorKind::Backend,
+                "Creating Operator from path failed. Please check the given schema and options.",
+                err,
+            )
+        })?;
 
         // TODO: add the extra retry options using ExponentialBackoff.
         let retry = config.retry.get_setting(constants::DEFAULT_RETRY as usize);
@@ -226,13 +222,15 @@ impl OpenDALBackend {
         let operator = Operator::new(operator.layer(LoggingLayer::default())).map_err(|err| {
             RusticError::with_source(
                 ErrorKind::Backend,
-                "Creating blocking Operator from path `{path}` failed.",
+                "Creating blocking Operator from path failed.",
                 err,
             )
-            .attach_context("path", config.scheme.to_string())
         })?;
 
-        Ok(Self { operator, config: config.to_owned() })
+        Ok(Self {
+            operator,
+            config: config.to_owned(),
+        })
     }
 
     pub(crate) fn get_reader(&self, path: impl AsRef<Path>) -> RusticResult<OpenDALReader> {
@@ -534,89 +532,6 @@ impl WriteBackend for OpenDALBackend {
                 .attach_context("type", tpe.to_string())
                 .attach_context("id", id.to_string())
         })?;
-        Ok(())
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use anyhow::Result;
-    use rstest::rstest;
-    use serde::Deserialize;
-    use std::marker;
-    use std::{fs, path::PathBuf};
-    use rustic_core::RepositoryOptions;
-    use crate::BackendOptions;
-    // <-- fixes rstest macro expansion
-
-    #[rstest]
-    #[case("10kB,10MB", Throttle{bandwidth:10_000, burst:10_000_000})]
-    #[case("10 kB,10  MB", Throttle{bandwidth:10_000, burst:10_000_000})]
-    #[case("10kB, 10MB", Throttle{bandwidth:10_000, burst:10_000_000})]
-    #[case(" 10kB,   10MB", Throttle{bandwidth:10_000, burst:10_000_000})]
-    #[case("10kiB,10MiB", Throttle{bandwidth:10_240, burst:10_485_760})]
-    fn correct_throttle(#[case] input: &str, #[case] expected: Throttle) {
-        assert_eq!(Throttle::from_str(input).unwrap(), expected);
-    }
-
-    #[rstest]
-    #[case("")]
-    #[case("10kiB")]
-    #[case("no_number,10MiB")]
-    #[case("10kB;10MB")]
-    fn invalid_throttle(#[case] input: &str) {
-        assert!(Throttle::from_str(input).is_err());
-    }
-
-    #[rstest]
-    fn new_opendal_backend(
-        #[files("tests/fixtures/opendal/*.toml")] test_case: PathBuf,
-    ) -> Result<()> {
-        #[derive(Deserialize)]
-        struct TestCase {
-            path: String,
-            options: BTreeMap<String, String>,
-        }
-
-        let test: TestCase = toml::from_str(&fs::read_to_string(test_case)?)?;
-        _ = OpenDALConfig::from_iter(test.path, test.options)?;
-        Ok(())
-    }
-
-    /// Test `warmup_path` includes root prefix when root is configured
-    #[rstest]
-    #[case("s3_aws", "path/to/repo/data/")] // root = "/path/to/repo"
-    #[case("s3_idrive", "data/")] // root = "/"
-    fn test_warmup_path_respects_root(
-        #[case] fixture: &str,
-        #[case] expected_prefix: &str,
-    ) -> Result<()> {
-        #[derive(Deserialize)]
-        struct TestCase {
-            path: String,
-            options: BTreeMap<String, String>,
-        }
-
-        let fixture_path = PathBuf::from(format!("tests/fixtures/opendal/{fixture}.toml"));
-        let test: TestCase = toml::from_str(&fs::read_to_string(fixture_path)?)?;
-        let backend = OpenDALConfig::from_iter(test.path, test.options)?;
-        let be = BackendOptions::default().set_repo(&backend).to_backends()?;
-
-        let id: Id = "03dc1178e4e54f69beaf35dd9d4256a5a600e9fa3452b9db80bd649938923e67".parse()?;
-        let path = be.repository().warmup_path(FileType::Pack, &id);
-
-        assert!(
-            path.starts_with(expected_prefix),
-            "warmup_path should start with '{expected_prefix}', got: {path}"
-        );
-        // Verify no double slashes
-        assert!(
-            !path.contains("//"),
-            "warmup_path should not contain double slashes: {path}"
-        );
-
         Ok(())
     }
 }

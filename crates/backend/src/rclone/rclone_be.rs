@@ -1,4 +1,4 @@
-use crate::rest::{RestBackend, RestConfig};
+use crate::rest::{RestBackend, RestRepo};
 use bytes::Bytes;
 use constants::DEFAULT_COMMAND;
 use derive_setters::Setters;
@@ -39,23 +39,22 @@ pub(super) mod constants {
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
-pub struct RcloneConfig {
+pub struct RcloneRepo {
     #[setters(skip)]
-    #[serde_as(as = "DisplayFromStr")]
-    url: Url,
+    url: String,
 
     use_password: Option<bool>,
 
     rclone_command: Option<String>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
-    rest_url: Option<Url>,
+    rest_url: Option<String>,
 }
 
-impl RcloneConfig {
-    pub fn new(url: impl Into<Url>) -> Self {
+impl RcloneRepo {
+    pub fn new(url: impl AsRef<String>) -> Self {
         Self {
-            url: url.into(),
+            url: url.as_ref().to_string(),
             use_password: None,
             rclone_command: None,
             rest_url: None,
@@ -91,7 +90,7 @@ impl RcloneConfig {
     }
 }
 
-impl RepositoryConfig for RcloneConfig {
+impl RepositoryConfig for RcloneRepo {
     fn get_path(&self) -> String {
         format!("rclone:{}", self.url.to_string())
     }
@@ -228,7 +227,7 @@ impl RcloneBackend {
     /// * If the rclone command is not found.
     // TODO: This should be an error, not a panic.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn new(config: &RcloneConfig) -> RusticResult<Self> {
+    pub(crate) fn new(config: &RcloneRepo) -> RusticResult<Self> {
         let rclone_command = config.rclone_command.clone();
         let use_password = config.use_password.unwrap_or(true);
 
@@ -262,7 +261,7 @@ impl RcloneBackend {
                 err,
             )
         )?;
-        rclone_command.append_arg(config.url.as_ref().to_string());
+        rclone_command.append_arg(config.url.to_string());
         debug!("starting rclone via {rclone_command:?}");
 
         let mut command = Command::new(rclone_command.command());
@@ -352,12 +351,12 @@ impl RcloneBackend {
             rest_url = format!("http://{user}:{password}@{}", &rest_url[7..]);
         }
 
-        debug!("using REST backend with url {}.", config.url.as_ref());
+        debug!("using REST backend with url {}.", &config.url);
         let rest_url = Url::parse(&rest_url).map_err(|err| {
             RusticError::with_source(ErrorKind::InputOutput, "URL is not valid", err)
         })?;
 
-        let rest_config = RestConfig::new(&rest_url);
+        let rest_config = RestRepo::new(&rest_url);
         let rest_be = RestBackend::new(&rest_config)?;
         let handle = Some(std::thread::spawn(move || {
             loop {
@@ -373,7 +372,7 @@ impl RcloneBackend {
 
         Ok(Self {
             child,
-            url: String::from(config.url.as_ref()),
+            url: config.url.clone(),
             rest: rest_be,
             handle,
         })

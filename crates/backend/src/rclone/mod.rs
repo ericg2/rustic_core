@@ -1,3 +1,3 @@
 mod rclone_be;
 
-pub use rclone_be::RcloneConfig;
+pub use rclone_be::RcloneRepo;

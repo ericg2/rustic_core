@@ -227,6 +227,7 @@ fn test_backup_stdin_command(
     // Fixtures
     let repo = set_up_repo?.to_indexed_ids()?;
     let d: CommandInput = "echo test".parse()?;
+
     let src = CommandSource::new(d, "test");
     let opts = BackupOptions::default();
     // backup data from cmd
