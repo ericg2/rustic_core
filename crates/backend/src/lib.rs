@@ -202,7 +202,7 @@ pub(crate) fn join_force(base: impl AsRef<Path>, p: impl AsRef<Path>) -> PathBuf
 /// # Returns
 /// A valid [`String`] for OpenDAL use.
 pub(crate) fn path_to_str(base: impl AsRef<Path>, p: impl AsRef<Path>, is_dir: bool) -> String {
-    let p = crate::join_force(base, p);
+    let p = join_force(base, p);
     let mut r: String = p.to_string_lossy().to_string();
     if !r.starts_with("/") {
         r = format!("/{r}")

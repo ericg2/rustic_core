@@ -1,7 +1,7 @@
 //! `restore` example
 use rustic_backend::BackendOptions;
 use rustic_core::{
-    Credentials, Destination, LsOptions, Repository, RepositoryOptions, RestoreOptions,
+    Credentials, LsOptions, Repository, RepositoryOptions, RestoreOptions,
 };
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;

@@ -1,4 +1,3 @@
-use std::path::Path;
 use crate::SupportedBackend;
 use rustic_core::{ErrorKind, RusticError, RusticResult, WriteBackend};
 

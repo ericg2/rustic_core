@@ -26,7 +26,7 @@ use crate::{
         decrypt::{DecryptBackend, DecryptReadBackend, DecryptWriteBackend},
         dest::Destination,
         hotcold::HotColdBackend,
-        node::{ExtendedAttribute, Node},
+        node::{Node},
         warm_up::WarmUpAccessBackend,
     },
     blob::{

@@ -1,22 +1,19 @@
 //! `restore` subcommand
 
 use derive_setters::Setters;
-use jiff::Timestamp;
 use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
 use dashmap::DashSet;
 use itertools::Itertools;
 use rayon::ThreadPoolBuilder;
-use std::collections::HashSet;
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Condvar;
 use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Mutex};
-use walkdir::{DirEntry, WalkDir};
 
 use crate::{
-    Destination, ReadSource, ReadSourceEntry, ReadFileOpen,
+    Destination, ReadSourceEntry, ReadFileOpen,
     backend::{
         FileType, ReadBackend,
         decrypt::DecryptReadBackend,

@@ -10,7 +10,7 @@ use serde_derive::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    CommandInput, Excludes, FilterOptions, ReadSource,
+    ReadSource,
     archiver::{Archiver, parent::Parent},
     error::{ErrorKind, RusticError, RusticResult},
     repofile::{

@@ -261,7 +261,7 @@ impl LocalSaveOptions {
     fn device_id(_m: &std::fs::Metadata) -> u64 {
         0
     }
-    fn hardlink(m: &std::fs::Metadata) -> bool {
+    fn hardlink(_m: &std::fs::Metadata) -> bool {
         false
     }
     fn user_group(

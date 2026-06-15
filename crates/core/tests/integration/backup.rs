@@ -8,9 +8,8 @@ use insta::Settings;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_backend::stdin::StdinSource;
-use rustic_backend::stdout::{CommandSource};
-use rustic_core::{BackupOptions, CommandInput, Grouped, ParentOptions, PathList, SnapshotGroupCriterion, SnapshotOptions, StringList, repofile::{PackId, SnapshotFile}, FilterOptions, Node, NodeType, Metadata, LsOptions, RusticResult};
+use rustic_backend::stdout::CommandSource;
+use rustic_core::{BackupOptions, CommandInput, Grouped, ParentOptions, SnapshotGroupCriterion, SnapshotOptions, StringList, repofile::{PackId, SnapshotFile}, FilterOptions, Node, NodeType, Metadata, LsOptions, RusticResult};
 
 use super::{
     RepoOpen, TestSource, assert_with_win, insta_node_redaction, insta_snapshotfile_redaction,

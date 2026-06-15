@@ -1,12 +1,10 @@
 use crate::repofile::{Metadata, Node};
-use crate::{ReadSource, ReadSourceBuilder, RestoreOptions, RusticResult};
+use crate::{ReadSource, RestoreOptions, RusticResult};
 use bytes::Bytes;
-use jiff::Timestamp;
-use std::io::Read;
-use std::num::TryFromIntError;
 use std::path::{Path, PathBuf};
 
 pub trait Destination: Send + Sync {
+    /// The [`ReadSource`] to list files for this [`Destination`].
     type Reader: ReadSource;
     
     /// Path to the given item (relative to the base path)

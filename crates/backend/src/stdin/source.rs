@@ -13,6 +13,7 @@ use rustic_core::{ErrorKind, ReadSource, ReadSourceBuilder, ReadSourceEntry, Rus
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
+/// A source to read from console input.
 pub struct StdinSource {
     /// The path of the stdin entry.
     #[setters(skip)]

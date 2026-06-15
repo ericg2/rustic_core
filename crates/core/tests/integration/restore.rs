@@ -1,16 +1,11 @@
-use std::{fs, path::PathBuf, str::FromStr};
 
 #[cfg(not(windows))]
 use std::os::unix::fs::MetadataExt;
 
-use super::{RepoOpen, TestSource, set_up_repo, tar_gz_testdata};
 use anyhow::Result;
-use pretty_assertions::assert_eq;
-use rstest::rstest;
 use rustic_backend::BackendOptions;
 use rustic_backend::local::{LocalDestination, LocalSource};
-use rustic_core::{BackupOptions, ConfigOptions, Credentials, Destination, KeyOptions, LsOptions, Repository, RepositoryBackends, RepositoryOptions, RestoreOptions, repofile::SnapshotFile, SnapshotOptions};
-use tempfile::tempdir;
+use rustic_core::{BackupOptions, ConfigOptions, Credentials, KeyOptions, LsOptions, Repository, RepositoryBackends, RepositoryOptions, RestoreOptions, repofile::SnapshotFile, SnapshotOptions};
 
 #[test]
 fn test_restore_local() -> Result<()> {

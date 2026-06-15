@@ -2,7 +2,6 @@ use std::fmt;
 use rustic_core::{ErrorKind, RusticError};
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
-use derive_setters::Setters;
 use serde_with::serde_as;
 
 #[serde_as]

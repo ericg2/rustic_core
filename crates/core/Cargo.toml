@@ -73,11 +73,8 @@ serde_with = { version = "3.16.1", features = ["base64"] }
 # local source/destination
 cached = { version = "1.1.0", default-features = false, features = ["proc_macro"] }
 dunce = "1.0.5"
-filetime = "0.2.27"
 ignore = "0.4.25"
-nix = { version = "0.31.1", default-features = false, features = ["user", "fs"] }
 path-dedot = "3.1.1"
-walkdir = "2.5.0"
 
 # cache
 cachedir = "0.3.1"
@@ -107,6 +104,7 @@ shell-words = "1.1.1"
 smallvec = { version = "1.15.1", features = ["union"] }
 strum = { version = "0.28.0", features = ["derive"] }
 zstd = "0.13.3"
+walkdir = "2.5.0"
 
 [target.'cfg(not(any(windows, target_os="openbsd")))'.dependencies]
 # for local source/destination

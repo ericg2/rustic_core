@@ -1,7 +1,7 @@
 use dashmap::DashMap;
 use ignore::Match;
 use ignore::overrides::Override;
-use rustic_core::{Excludes, Metadata, Node, ReadSourceEntry, RusticResult};
+use rustic_core::{Excludes, ReadSourceEntry, RusticResult};
 use std::path::PathBuf;
 
 
@@ -24,13 +24,13 @@ impl ExcludeFilter {
         match self.sort.matched(&path, entry.node.is_dir()) {
             Match::Ignore(_) => {
                 if entry.node.is_dir() {
-                    self.work_dirs.insert(path.to_path_buf(), false);
+                    let _ = self.work_dirs.insert(path.to_path_buf(), false);
                 }
                 return false;
             }
             Match::Whitelist(_) => {
                 if entry.node.is_dir() {
-                    self.work_dirs.insert(path.to_path_buf(), true);
+                    let _ = self.work_dirs.insert(path.to_path_buf(), true);
                 }
                 return true;
             }

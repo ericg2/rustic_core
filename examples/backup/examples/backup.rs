@@ -1,15 +1,9 @@
 //! `backup` example
-
-use std::collections::HashMap;
 use rustic_backend::BackendOptions;
-use rustic_core::{BackupOptions, Credentials, Excludes, FilterOptions, PathList, Repository, RepositoryConfig, RepositoryOptions, RusticResult, SnapshotOptions, WriteBackend};
+use rustic_core::{BackupOptions, Credentials, PathList, Repository, RepositoryOptions, SnapshotOptions};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
-use std::path::Path;
-use std::sync::Arc;
-use rustic_backend::local::{LocalRepo, LocalSaveOptions, LocalSource};
-use rustic_backend::opendal::config::B2Config;
-use rustic_backend::opendal::{OpenDALRepo, OpenDALSource};
+use rustic_backend::local::{LocalRepo, LocalSource};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Display info logs

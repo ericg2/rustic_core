@@ -2,17 +2,16 @@ use bytes::Bytes;
 use bytesize::ByteSize;
 use derive_setters::Setters;
 use log::{error, trace, warn};
-use opendal::raw::Access;
 use opendal::{
-    Builder, Configurator, Entry, IntoOperatorUri, OperatorBuilder,
-    blocking::{Operator, StdReader},
-    layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer},
-    options::{ListOptions, ReadOptions},
+    blocking::{Operator, StdReader}, layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer}, options::{ListOptions, ReadOptions}, Builder, Configurator,
+    Entry,
+    IntoOperatorUri,
+    OperatorBuilder,
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use serde_with::{DisplayFromStr, serde_as};
+use serde_with::{serde_as, DisplayFromStr};
 use std::collections::HashMap;
 use std::path::Path;
 /// `OpenDAL` backend for rustic.
@@ -32,10 +31,10 @@ use crate::opendal::opendal_src::OpenDALReader;
 use crate::opendal::{OpenDALDestination, OpenDALSource, Throttle};
 use crate::retry::RetrySetting;
 use rustic_core::{
-    ALL_FILE_TYPES, ErrorKind, Excludes, FileType, Id, Metadata, PathList, ReadBackend,
+    repofile::{Node, NodeType}, ErrorKind, Excludes, FileType, Id, Metadata, PathList, ReadBackend,
     ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry, RepositoryConfig, RusticError,
     RusticResult, WriteBackend,
-    repofile::{Node, NodeType},
+    ALL_FILE_TYPES,
 };
 
 mod constants {

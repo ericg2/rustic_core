@@ -39,6 +39,7 @@ pub(super) mod constants {
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
+/// A repository using Rclone.
 pub struct RcloneRepo {
     #[setters(skip)]
     url: String,

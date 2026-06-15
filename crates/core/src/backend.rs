@@ -16,7 +16,7 @@ use log::trace;
 use mockall::mock;
 
 use crate::{
-    Destination, FilterOptions,
+    Destination,
     backend::node::{Metadata, Node, NodeType},
     error::RusticResult,
     id::Id,
@@ -25,9 +25,7 @@ use serde::de::DeserializeOwned;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::path::Path;
 use std::{io::Read, ops::Deref, path::PathBuf, sync::Arc};
-use serde_json::Value;
 
 /// [`BackendErrorKind`] describes the errors that can be returned by the various Backends
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
@@ -400,7 +398,7 @@ impl ReadBackend for Arc<dyn WriteBackend> {
     }
 }
 
-impl std::fmt::Debug for dyn WriteBackend {
+impl Debug for dyn WriteBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "WriteBackend{{{}}}", self.location())
     }
@@ -424,6 +422,11 @@ pub struct ReadSourceEntry<O> {
 }
 
 impl<O> ReadSourceEntry<O> {
+    /// Creates a [`ReadSourceEntry`] from a given path.
+    ///
+    /// # Arguments
+    /// * `path` - The path to use.
+    /// * `open` - A valid way to create a handle.
     pub fn from_path(path: PathBuf, open: Option<O>) -> BackendResult<Self> {
         let node = Node::new_node(
             path.file_name()
@@ -462,6 +465,7 @@ pub trait ReadFileOpen {
 pub trait DestinationBuilder:
     serde::Serialize + DeserializeOwned + Debug + Send + Sync + 'static
 {
+    /// The [`Destination`] to create from this builder.
     type Output: Destination;
 
     /// Opens a [`Destination`] for the specified config.
@@ -476,6 +480,7 @@ pub trait DestinationBuilder:
 pub trait ReadSourceBuilder:
     serde::Serialize + DeserializeOwned + Debug + Sync + Send + 'static
 {
+    /// The [`ReadSource`] to create from this builder.
     type Reader: ReadSource;
 
     /// Opens a [`ReadSource`] for the specified path and options.
@@ -488,8 +493,23 @@ pub trait ReadSourceBuilder:
 
 /// Trait for repository backends.
 pub trait RepositoryConfig: Debug + Send + Sync {
+    /// # Returns
+    ///
+    /// A string [`Path`] of the [`RepositoryConfig`].
     fn get_path(&self) -> String;
+
+    /// # Returns
+    ///
+    /// All dynamic options of this [`RepositoryConfig`]. It should de-serialize correctly.
     fn get_options(&self) -> HashMap<String, String>;
+
+    /// # Returns
+    ///
+    /// The [`Repository`] backend for this config.
+    ///
+    /// # Errors
+    /// * If the backend could not be created.
+    /// * If the configuration is invalid.
     fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>>;
 }
 

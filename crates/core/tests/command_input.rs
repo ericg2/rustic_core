@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use std::collections::HashMap;
+
 #[cfg(not(windows))]
 use std::fs::File;
 

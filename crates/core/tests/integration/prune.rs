@@ -45,12 +45,14 @@ fn test_prune(
     let repo = repo.to_indexed_ids()?;
     // second backup
     let paths = PathList::from_iter(Some(source.0.path().join("0/0/9/2")));
+    let src = LocalSource::new(&paths);
     let _ = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // third backup
     let paths = PathList::from_iter(Some(source.0.path().join("0/0/9/3")));
+    let src = LocalSource::new(&paths);
     let _ = repo.backup(&opts, &src, SnapshotFile::default())?;
 
     // drop index
@@ -63,6 +65,7 @@ fn test_prune(
         .max_unused(max_unused)
         .keep_delete(Span::default())
         .fast_repack(fast_repack);
+    
     let plan = repo.prune_plan(&prune_opts)?;
     // TODO: Snapshot-test the plan (currently doesn't impl Serialize)
     // assert_ron_snapshot!("prune", plan);

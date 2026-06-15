@@ -31,18 +31,42 @@ macro_rules! opendal_add {
                 strum::AsRefStr,
             )]
             #[non_exhaustive]
+            /// Configuration scheme for a repository backend.
+            ///
+            /// This enum provides strongly typed configuration for known backends,
+            /// while still allowing unknown or externally defined backends to be
+            /// represented through [`Scheme::Dynamic`].
+            ///
+            /// This enum is marked as `non_exhaustive`, so consumers should include
+            /// a wildcard arm (`_`) when matching against it.
             pub enum Scheme {
+                /// A dynamic scheme that is unknown.
+                ///
+                /// This variant can be used for backends that are not known at
+                /// compile time. The backend name identifies the implementation,
+                /// and the configuration map contains backend-specific key/value
+                /// settings.
                 Dynamic {
+                    /// The backend identifier.
                     backend: String,
+
+                    /// Backend-specific configuration values.
                     config: std::collections::HashMap<String, String>,
                 },
                 $(
-                    $variant([<$variant Config>]),
+                   #[doc = concat!(
+                        "Configuration for the `",
+                        stringify!($variant),
+                        "` backend.\n\nSee [`",
+                        stringify!([<$variant Config>]),
+                        "`] for the available options."
+                   )]
+                   $variant([<$variant Config>]),
                 )*
             }
 
             impl Scheme {
-                pub fn dynamic<T, K, V>(
+                pub(crate) fn dynamic<T, K, V>(
                     scheme: impl AsRef<str>,
                     value: T,
                 ) -> Self
@@ -60,16 +84,16 @@ macro_rules! opendal_add {
                     }
                 }
 
-                pub fn key(&self) -> Option<String> {
+                pub(crate) fn key(&self) -> Option<String> {
                     match self {
-                        Scheme::Dynamic { backend, config } => Some(backend.clone()),
+                        Scheme::Dynamic { backend, .. } => Some(backend.clone()),
                         $(
                             Scheme::$variant(_) => Some(stringify!($variant).to_string()),
                         )*
                     }
                 }
 
-                pub fn operator(&self) -> opendal::Result<opendal::Operator> {
+                pub(crate) fn operator(&self) -> opendal::Result<opendal::Operator> {
                     match self {
                         Scheme::Dynamic { backend, config } => {
                             opendal::Operator::via_iter(

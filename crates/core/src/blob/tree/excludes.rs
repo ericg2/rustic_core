@@ -40,6 +40,7 @@ impl Excludes {
         self == &Self::default()
     }
 
+    /// Returns the current [`Excludes`] as an [`Override`].
     pub fn as_override(&self) -> RusticResult<Override> {
         let mut override_builder = OverrideBuilder::new("");
         for g in &self.globs {

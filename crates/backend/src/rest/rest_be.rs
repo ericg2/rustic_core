@@ -188,7 +188,7 @@ impl RestRepo {
             .collect();
 
         // inject scheme so serde can populate it
-        map.insert("url".to_string(), url.as_ref().to_string());
+        let _ = map.insert("url".to_string(), url.as_ref().to_string());
 
         let config: Self = serde_json::to_value(map)
             .and_then(serde_json::from_value)
@@ -203,6 +203,7 @@ impl RestRepo {
         Ok(config)
     }
 
+    /// Sets the CA Cert [`Certificate`] from an encoded string.
     pub fn ca_cert(mut self, cert: impl Into<Option<String>>) -> Self {
         self.ca_cert = cert.into();
         self
@@ -240,6 +241,7 @@ impl RestRepo {
         Ok(self)
     }
 
+    /// Sets the TLS Client [`Identity`] from an encoded string.
     pub fn tls_client_cert(mut self, cert: impl Into<Option<String>>) -> Self {
         self.tls_client_cert = cert.into();
         self
@@ -253,7 +255,7 @@ impl RepositoryConfig for RestRepo {
 
     fn get_options(&self) -> HashMap<String, String> {
         let mut ret = crate::struct_to_map(&self);
-        ret.remove("url");
+        let _ = ret.remove("url");
         ret
     }
 

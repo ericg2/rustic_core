@@ -1,15 +1,3 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use serde::Serialize;
-use serde_json::Value;
-use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};
-use crate::opendal::config::*;
-use crate::opendal::OpenDALRepo;
-
-
-// gen_scheme!(B2_SCHEME, B2Config);
-// gen_scheme!(FTP_SCHEME, FtpConfig);
-// gen_scheme!(SWIFT_SCHEME, SwiftConfig);
 // gen_scheme!(AZBLOB_SCHEME, AzblobConfig);
 // gen_scheme!(AZDLS_SCHEME, AzdlsConfig);
 // gen_scheme!(AZFILE_SCHEME, AzfileConfig);
