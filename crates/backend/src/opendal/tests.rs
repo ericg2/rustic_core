@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::opendal::OpenDALRepo;
+    use crate::opendal::{OpenDALConfig, OpenDALSource};
     use crate::opendal::Throttle;
     use std::collections::BTreeMap;
     use std::str::FromStr;
@@ -42,13 +42,14 @@ mod tests {
         }
 
         let test: TestCase = toml::from_str(&fs::read_to_string(test_case)?)?;
-        let repo = OpenDALRepo::from_iter(test.path, test.options);
+        let repo = OpenDALConfig::from_iter(test.path, test.options);
         let _ = BackendOptions::default().with_repo(&repo).to_backends()?;
 
         // Make sure the repository can be serialized and de-serialized as well...
         let s_repo = serde_json::to_string(&repo)?;
         assert!(!s_repo.is_empty());
-        let d_repo = serde_json::from_str::<OpenDALConfig>(&s_repo);
+        let d_repo = serde_json::from_str::<OpenDALConfig>(&s_repo)?;
+        assert_eq!(repo, d_repo);
 
         Ok(())
     }
@@ -69,7 +70,7 @@ mod tests {
 
         let fixture_path = PathBuf::from(format!("tests/fixtures/opendal/{fixture}.toml"));
         let test: TestCase = toml::from_str(&fs::read_to_string(fixture_path)?)?;
-        let backend = OpenDALRepo::from_iter(test.path, test.options);
+        let backend = OpenDALConfig::from_iter(test.path, test.options);
         let be = BackendOptions::default()
             .with_repo(&backend)
             .to_backends()?;

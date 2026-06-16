@@ -492,7 +492,7 @@ pub trait ReadSourceBuilder:
 }
 
 /// Trait for repository backends.
-pub trait RepositoryConfig: Debug + Send + Sync + 'static {
+pub trait RepositoryConfig: Debug + Send + Sync {
     /// # Returns
     ///
     /// A string [`Path`] of the [`RepositoryConfig`].
@@ -512,20 +512,20 @@ pub trait RepositoryConfig: Debug + Send + Sync + 'static {
     /// * If the configuration is invalid.
     fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>>;
 }
-//
-// impl<T: RepositoryConfig + ?Sized> RepositoryConfig for &T {
-//     fn get_path(&self) -> Option<String> {
-//         (**self).get_path()
-//     }
-//
-//     fn get_options(&self) -> HashMap<String, String> {
-//         (**self).get_options()
-//     }
-//
-//     fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-//         (**self).get_repo()
-//     }
-// }
+
+impl<T: RepositoryConfig + ?Sized> RepositoryConfig for &T {
+    fn get_path(&self) -> Option<String> {
+        (**self).get_path()
+    }
+
+    fn get_options(&self) -> HashMap<String, String> {
+        (**self).get_options()
+    }
+
+    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
+        (**self).get_repo()
+    }
+}
 
 /// blanket implementation for readers
 impl<T: Read + Send + 'static> ReadFileOpen for T {
