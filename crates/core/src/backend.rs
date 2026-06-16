@@ -463,7 +463,7 @@ pub trait ReadFileOpen {
 
 /// Trait for backends that can be restored to.
 pub trait DestinationBuilder:
-    serde::Serialize + DeserializeOwned + Debug + Send + Sync + 'static
+    serde::Serialize + DeserializeOwned + Debug + Send + Sync + Default + 'static
 {
     /// The [`Destination`] to create from this builder.
     type Output: Destination;
@@ -478,7 +478,7 @@ pub trait DestinationBuilder:
 
 /// Trait for backends that can start a read.
 pub trait ReadSourceBuilder:
-    serde::Serialize + DeserializeOwned + Debug + Sync + Send + 'static
+    serde::Serialize + DeserializeOwned + Debug + Sync + Send + Default + 'static
 {
     /// The [`ReadSource`] to create from this builder.
     type Reader: ReadSource;
@@ -492,11 +492,11 @@ pub trait ReadSourceBuilder:
 }
 
 /// Trait for repository backends.
-pub trait RepositoryConfig: Debug + Send + Sync {
+pub trait RepositoryConfig: Debug + Send + Sync + 'static {
     /// # Returns
     ///
     /// A string [`Path`] of the [`RepositoryConfig`].
-    fn get_path(&self) -> String;
+    fn get_path(&self) -> Option<String>;
 
     /// # Returns
     ///
@@ -512,20 +512,20 @@ pub trait RepositoryConfig: Debug + Send + Sync {
     /// * If the configuration is invalid.
     fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>>;
 }
-
-impl<T: RepositoryConfig + ?Sized> RepositoryConfig for &T {
-    fn get_path(&self) -> String {
-        (**self).get_path()
-    }
-
-    fn get_options(&self) -> HashMap<String, String> {
-        (**self).get_options()
-    }
-
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-        (**self).get_repo()
-    }
-}
+//
+// impl<T: RepositoryConfig + ?Sized> RepositoryConfig for &T {
+//     fn get_path(&self) -> Option<String> {
+//         (**self).get_path()
+//     }
+//
+//     fn get_options(&self) -> HashMap<String, String> {
+//         (**self).get_options()
+//     }
+//
+//     fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
+//         (**self).get_repo()
+//     }
+// }
 
 /// blanket implementation for readers
 impl<T: Read + Send + 'static> ReadFileOpen for T {

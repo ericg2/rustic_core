@@ -14,7 +14,6 @@ use serde_json::{Map, Value};
 use serde_with::{serde_as, DisplayFromStr};
 use std::collections::HashMap;
 use std::path::Path;
-/// `OpenDAL` backend for rustic.
 use std::{
     collections::BTreeMap,
     ffi::OsStr,
@@ -27,7 +26,7 @@ use typed_path::UnixPathBuf;
 
 use crate::normalize_value;
 use crate::opendal::config::*;
-use crate::opendal::opendal_src::OpenDALReader;
+use crate::opendal::source::OpenDALReader;
 use crate::opendal::{OpenDALDestination, OpenDALSource, Throttle};
 use crate::retry::RetrySetting;
 use rustic_core::{
@@ -55,149 +54,17 @@ fn runtime() -> &'static Runtime {
     })
 }
 
-#[serde_as]
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Setters)]
-#[serde(rename_all = "kebab-case")]
-#[setters(into)]
-#[non_exhaustive]
-/// Represents a openDAL repository.
-pub struct OpenDALRepo {
-    /// The maximum connections.
-    #[serde(alias = "connections", alias = "max_connections")]
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    connections: Option<u32>,
-
-    /// The [`Throttle`] settings.
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    throttle: Option<Throttle>,
-
-    /// The [`RetrySetting`] config.
-    #[serde_as(as = "DisplayFromStr")]
-    #[serde(default)]
-    retry: RetrySetting,
-
-    /// The serialized config.
-    #[setters(skip)]
-    #[serde(flatten)]
-    config: Scheme,
-}
-
-impl OpenDALRepo {
-    pub fn from_iter<K, V, I>(scheme: impl AsRef<str>, dict: I) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
-    {
-        let mut map: HashMap<String, String> = dict
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-
-        let connections = map
-            .remove("connections")
-            .or_else(|| map.remove("max_connections"))
-            .and_then(|v| v.parse::<u32>().ok());
-
-        let throttle = map
-            .remove("throttle")
-            .and_then(|v| v.parse::<Throttle>().ok());
-
-        let retry = map
-            .remove("retry")
-            .and_then(|v| v.parse::<RetrySetting>().ok())
-            .unwrap_or_default();
-
-        Self {
-            connections,
-            throttle,
-            retry,
-            config: Scheme::dynamic(scheme, map),
-        }
-    }
-
-    /// Creates a new openDAL backend via a [`Builder`].
-    ///
-    ///
-    /// # Arguments
-    ///
-    /// * `be` - The [`Builder`] to use. Ex: [`S3`] or [`B2`]
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use opendal::services::{S3Config, S3};
-    /// use rustic_backend::opendal::{OpenDALBackend, OpenDALRepo};
-    ///
-    /// let config = S3::default()
-    ///     .bucket("abcd")
-    ///     .access_key_id("SECRET")
-    ///     .endpoint("127.0.0.1");
-    ///
-    /// let be = OpenDALRepo::from_builder(config);
-    /// ```
-    pub fn new(be: impl Into<Scheme>) -> Self {
-        Self {
-            config: be.into(),
-            retry: RetrySetting::Default,
-            connections: None,
-            throttle: None,
-        }
-    }
-
-    pub fn restore_to(&self, path: impl AsRef<Path>) -> OpenDALDestination {
-        OpenDALDestination::new(&self, path)
-    }
-
-    pub fn backup_from(&self, path: impl Into<PathList>) -> OpenDALSource {
-        OpenDALSource::new(&self, path)
-    }
-}
-
-impl RepositoryConfig for OpenDALRepo {
-    fn get_path(&self) -> String {
-        format!("opendal:{}", self.config.key().unwrap_or(String::new()))
-    }
-
-    fn get_options(&self) -> HashMap<String, String> {
-        let mut ret = crate::struct_to_map(&self);
-        ret.remove("scheme");
-        ret.into_iter().collect()
-    }
-
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-        // OpenDALBackend is impl WriteBackend
-        let ret = OpenDALBackend::new(&self)?;
-        Ok(Arc::new(ret))
-    }
-}
 
 /// `OpenDALPath` contains a wrapper around a blocking operator of the `OpenDAL` library.
 #[derive(Clone, Debug)]
-pub(crate) struct OpenDALBackend {
+pub struct OpenDALBackend {
     pub(crate) operator: Operator,
-    config: OpenDALRepo,
+    pub(crate) config: OpenDALConfig,
 }
 
 impl OpenDALBackend {
-    /// Create a new openDAL backend via dynamic types.
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - The path to the `OpenDAL` backend.
-    /// * `options` - Additional options for the `OpenDAL` backend.
-    ///
-    /// # Errors
-    ///
-    /// * If the path is not a valid `OpenDAL` path.
-    ///
-    /// # Returns
-    ///
-    /// A new `OpenDAL` backend.
-    pub(crate) fn new(config: &OpenDALRepo) -> RusticResult<Self> {
-        let mut operator = config.config.operator().map_err(|err| {
+    pub(crate) fn new(config: &OpenDALConfig) -> RusticResult<Self> {
+        let mut operator = config.scheme().operator().map_err(|err| {
             RusticError::with_source(
                 ErrorKind::Backend,
                 "Creating Operator from path failed. Please check the given schema and options.",

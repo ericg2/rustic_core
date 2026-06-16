@@ -5,7 +5,7 @@ use rustic_core::{
 };
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use std::iter::{once, Once};
+use std::iter::{Once, once};
 use std::path::Path;
 use std::process::{Child, ChildStdout, Stdio};
 use std::sync::Mutex;
@@ -13,26 +13,21 @@ use std::{path::PathBuf, process::Command};
 
 /// A source which backups a [`Command`] output.
 #[serde_as]
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Debug, Setters, Serialize, Deserialize)]
+#[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
 pub struct CommandSource {
-    #[setters(skip)]
-    output: PathBuf,
-
-    #[setters(skip)]
-    command: CommandInput,
+    pub output: Option<PathBuf>,
+    pub command: Option<CommandInput>,
 }
 
 impl CommandSource {
     /// Creates a new [`CommandSource`] with the given command.
     pub fn new(cmd: impl Into<CommandInput>, output: impl AsRef<Path>) -> Self {
         Self {
-            output: output.as_ref().to_path_buf(),
-            command: cmd.into(),
+            output: Some(output.as_ref().to_path_buf()),
+            command: Some(cmd.into()),
         }
     }
 }
@@ -49,7 +44,10 @@ impl ReadSourceBuilder for CommandSource {
 #[derive(Debug)]
 pub struct StdoutReader {
     /// The path of the stdin entry.
-    config: CommandSource,
+    output: PathBuf,
+
+    /// The [`CommandInput`] to use.
+    cmd: CommandInput,
 
     /// The child process
     ///
@@ -67,20 +65,28 @@ impl StdoutReader {
     /// # Errors
     /// - if calling the command fails
     pub(crate) fn new(config: &CommandSource) -> RusticResult<Self> {
-        let cmd = config.command.clone();
+        let output = config.output.clone().ok_or(RusticError::new(
+            ErrorKind::Configuration,
+            "Output must be filled in",
+        ))?;
+        let cmd = config.command.clone().ok_or(RusticError::new(
+            ErrorKind::Configuration,
+            "Command must be filled in",
+        ))?;
         let process = Command::new(cmd.command())
             .args(cmd.args())
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|err| CommandInputErrorKind::ProcessExecutionFailed {
                 command: cmd.clone(),
-                path: config.output.clone(),
+                path: output.clone(),
                 source: err,
             });
 
         Ok(Self {
             process: Mutex::new(cmd.on_failure().display_result(process)?),
-            config: config.to_owned(),
+            output,
+            cmd,
         })
     }
 
@@ -93,8 +99,7 @@ impl StdoutReader {
     /// - if the lock for the process cannot be obtained (should not happen)
     pub fn finish(self) -> RusticResult<()> {
         let status = self.process.lock().unwrap().wait();
-        self.config
-            .command
+        self.cmd
             .on_failure()
             .handle_status(status, "stdin-command", "call")?;
         Ok(())
@@ -112,7 +117,7 @@ impl ReadSource for StdoutReader {
     fn entries(&self) -> Self::Iter {
         let open = self.process.lock().unwrap().stdout.take();
         once(
-            ReadSourceEntry::from_path(self.config.output.clone(), open).map_err(|err| {
+            ReadSourceEntry::from_path(self.output.clone(), open).map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::Backend,
                     "Failed to create ReadSourceEntry from ChildStdout",
@@ -123,6 +128,6 @@ impl ReadSource for StdoutReader {
     }
 
     fn paths(&self) -> Vec<PathBuf> {
-        vec![self.config.output.clone()]
+        vec![self.output.clone()]
     }
 }

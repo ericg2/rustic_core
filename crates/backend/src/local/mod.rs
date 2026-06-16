@@ -1,9 +1,10 @@
-mod local_src;
-mod local_be;
-mod local_dest;
+mod source;
+mod backend;
+mod destination;
 mod mapper;
+mod config;
 
-pub use local_dest::LocalDestination;
-pub use local_be::LocalRepo;
-pub use local_src::LocalSource;
+pub use destination::LocalDestination;
+pub use config::LocalConfig;
+pub use source::LocalSource;
 pub use mapper::LocalSaveOptions;

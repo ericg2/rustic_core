@@ -7,24 +7,21 @@ use serde_with::serde_as;
 use rustic_core::{ErrorKind, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult};
 
 #[serde_as]
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Debug, Setters, Serialize, Deserialize)]
+#[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
 /// A source to read from console input.
 pub struct StdinSource {
-    /// The path of the stdin entry.
     #[setters(skip)]
-    output: PathBuf
+    pub output: Option<PathBuf>
 }
 
 impl StdinSource {
     /// Creates a new [`StdinSource`] with the path to output to.
     pub fn new(output: impl AsRef<Path>) -> Self {
         Self {
-            output: output.as_ref().to_path_buf()
+            output: Some(output.as_ref().to_path_buf())
         }
     }
 }
@@ -33,7 +30,8 @@ impl ReadSourceBuilder for StdinSource {
     type Reader = StdinReader;
 
     fn get_reader(&self) -> RusticResult<Self::Reader> {
-        Ok(StdinReader::new(&self))
+        let output = self.output.clone().ok_or(RusticError::new(ErrorKind::Configuration, "Output must be filled in"))?;
+        Ok(StdinReader::new(output))
     }
 }
 
@@ -41,13 +39,13 @@ impl ReadSourceBuilder for StdinSource {
 #[derive(Debug, Clone)]
 pub struct StdinReader {
     /// The path of the stdin entry.
-    config: StdinSource,
+    output: PathBuf,
 }
 
 impl StdinReader {
     /// Creates a new `StdinSource`.
-    pub(crate) fn new(config: &StdinSource) -> Self {
-        Self { config: config.to_owned() }
+    pub(crate) fn new(output: PathBuf) -> Self {
+        Self { output }
     }
 }
 
@@ -66,7 +64,7 @@ impl ReadSource for StdinReader {
     fn entries(&self) -> Self::Iter {
         let open = Some(stdin());
         once(
-            ReadSourceEntry::from_path(self.config.output.clone(), open).map_err(|err| {
+            ReadSourceEntry::from_path(self.output.clone(), open).map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::Backend,
                     "Failed to create ReadSourceEntry from Stdin",
@@ -77,6 +75,6 @@ impl ReadSource for StdinReader {
     }
 
     fn paths(&self) -> Vec<PathBuf> {
-        vec![self.config.output.clone()]
+        vec![self.output.clone()]
     }
 }

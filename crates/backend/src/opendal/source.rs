@@ -1,5 +1,5 @@
 use crate::filter::ExcludeFilter;
-use crate::opendal::{OpenDALBackend, OpenDALRepo, OpenDALDestination};
+use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALDestination};
 
 use log::warn;
 use opendal::blocking::StdReader;
@@ -20,29 +20,23 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[serde_as]
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Setters)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Setters, Default)]
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
 /// OpenDAL-backed source definition
 pub struct OpenDALSource {
-    #[setters(skip)]
-    paths: Vec<PathBuf>,
-
-    #[setters(skip)]
-    config: OpenDALRepo,
-
-    excludes: Option<Excludes>,
+    pub paths: Vec<PathBuf>,
+    pub config: Option<OpenDALConfig>,
+    pub excludes: Option<Excludes>,
 }
 
 impl OpenDALSource {
     /// Creates a new [`OpenDALSource`] with the given paths.
-    pub fn new(config: &OpenDALRepo, paths: impl Into<PathList>) -> Self {
+    pub fn new(config: &OpenDALConfig, paths: impl Into<PathList>) -> Self {
         Self {
             paths: paths.into().paths(),
-            config: config.to_owned(),
+            config: Some(config.to_owned()),
             excludes: None,
         }
     }
@@ -52,8 +46,25 @@ impl ReadSourceBuilder for OpenDALSource {
     type Reader = OpenDALReader;
 
     fn get_reader(&self) -> RusticResult<Self::Reader> {
-        let be = OpenDALBackend::new(&self.config)?;
-        OpenDALReader::new(Arc::new(be), &self)
+        if self.paths.is_empty() {
+            return Err(RusticError::new(
+                ErrorKind::Configuration,
+                "One or more paths are required for source",
+            ));
+        }
+
+        let config = self.config.as_ref().ok_or(RusticError::new(
+            ErrorKind::Configuration,
+            "OpenDAL Config is required for source.",
+        ))?;
+
+        let be = OpenDALBackend::new(&config)?;
+        let ret = OpenDALReader::new(
+            Arc::new(be),
+            self.paths.clone(),
+            self.excludes.clone(),
+        )?;
+        Ok(ret)
     }
 }
 
@@ -100,7 +111,8 @@ impl Iterator for OpenDALIterator {
 pub struct OpenDALReader {
     entries: Vec<ReadSourceEntry<OpenDALFile>>,
     be: Arc<OpenDALBackend>,
-    config: OpenDALSource,
+    paths: Vec<PathBuf>,
+    excludes: Option<Excludes>,
 }
 
 impl ReadSource for OpenDALReader {
@@ -118,35 +130,37 @@ impl ReadSource for OpenDALReader {
     }
 
     fn paths(&self) -> Vec<PathBuf> {
-        self.config.paths.clone()
+        self.paths.clone()
     }
 }
 
 impl OpenDALReader {
-    pub(crate) fn new(be: Arc<OpenDALBackend>, config: &OpenDALSource) -> RusticResult<Self> {
+    pub(crate) fn new(
+        be: Arc<OpenDALBackend>,
+        paths: Vec<PathBuf>,
+        excludes: Option<Excludes>,
+    ) -> RusticResult<Self> {
         Ok(Self {
-            entries: Self::map_all(be.clone(), config)?,
-            config: config.to_owned(),
+            entries: Self::map_all(be.clone(), &paths, &excludes)?,
+            paths,
+            excludes,
             be,
         })
     }
 
     fn map_all(
         be: Arc<OpenDALBackend>,
-        config: &OpenDALSource,
+        paths: &Vec<PathBuf>,
+        excludes: &Option<Excludes>,
     ) -> RusticResult<Vec<ReadSourceEntry<OpenDALFile>>> {
-        let filter = config
-            .excludes
-            .clone()
-            .map(ExcludeFilter::new)
-            .transpose()?;
+        let filter = excludes.clone().map(ExcludeFilter::new).transpose()?;
         let list_options = ListOptions {
             recursive: true,
             ..Default::default()
         };
 
         let mut all_entries = Vec::new();
-        for root in &config.paths {
+        for root in paths {
             let path = crate::path_to_str(root, "", true);
             let lister = be
                 .operator

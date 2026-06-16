@@ -254,18 +254,15 @@ impl ReadSource for LocalReader {
 }
 
 #[serde_as]
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Debug, Setters, Serialize, Deserialize)]
+#[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
 #[setters(into)]
 #[non_exhaustive]
 /// A source that contains local files.
 pub struct LocalSource {
-    #[setters(skip)]
-    paths: Vec<PathBuf>,
-    excludes: Option<Excludes>,
-    filter_opts: Option<FilterOptions>,
-    save_opts: Option<LocalSaveOptions>,
+    pub paths: Vec<PathBuf>,
+    pub excludes: Option<Excludes>,
+    pub filter_opts: Option<FilterOptions>,
+    pub save_opts: Option<LocalSaveOptions>,
 }
 
 impl LocalSource {
@@ -284,6 +281,13 @@ impl ReadSourceBuilder for LocalSource {
     type Reader = LocalReader;
 
     fn get_reader(&self) -> RusticResult<Self::Reader> {
+        if self.paths.is_empty() {
+            return Err(RusticError::new(
+                ErrorKind::Configuration,
+                "One or more paths are required for source",
+            ));
+        }
+
         LocalReader::new(&self)
     }
 }

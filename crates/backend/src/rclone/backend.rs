@@ -1,4 +1,4 @@
-use crate::rest::{RestBackend, RestRepo};
+use crate::rest::{RestBackend, RestConfig};
 use bytes::Bytes;
 use constants::DEFAULT_COMMAND;
 use derive_setters::Setters;
@@ -20,92 +20,18 @@ use std::{
 };
 use url::Url;
 
+use crate::local::LocalConfig;
 use rustic_core::{
     CommandInput, ErrorKind, FileType, Id, ReadBackend, RepositoryConfig, RusticError,
     RusticResult, WriteBackend,
 };
+use crate::rclone::RcloneConfig;
 
 pub(super) mod constants {
     /// The default command called if no other is specified
     pub(super) const DEFAULT_COMMAND: &str = "rclone serve restic --addr localhost:0";
     /// The string to search for in the rclone output.
     pub(super) const SEARCH_STRING: &str = "Serving restic REST API on ";
-}
-
-#[serde_as]
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Debug, Setters, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-#[setters(into)]
-#[non_exhaustive]
-/// A repository using Rclone.
-pub struct RcloneRepo {
-    #[setters(skip)]
-    url: String,
-
-    use_password: Option<bool>,
-
-    rclone_command: Option<String>,
-
-    #[serde_as(as = "Option<DisplayFromStr>")]
-    rest_url: Option<String>,
-}
-
-impl RcloneRepo {
-    pub fn new(url: impl AsRef<String>) -> Self {
-        Self {
-            url: url.as_ref().to_string(),
-            use_password: None,
-            rclone_command: None,
-            rest_url: None,
-        }
-    }
-
-    //noinspection DuplicatedCode
-    pub fn from_iter<K, V, I>(url: impl AsRef<str>, dict: I) -> RusticResult<Self>
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
-    {
-        let mut map: HashMap<String, String> = dict
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-
-        // inject scheme so serde can populate it
-        map.insert("url".to_string(), url.as_ref().to_string());
-
-        let config: Self = serde_json::to_value(map)
-            .and_then(serde_json::from_value)
-            .map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::Configuration,
-                    "Failed to deserialize OpenDAL config",
-                    err,
-                )
-            })?;
-
-        Ok(config)
-    }
-}
-
-impl RepositoryConfig for RcloneRepo {
-    fn get_path(&self) -> String {
-        format!("rclone:{}", self.url.to_string())
-    }
-
-    fn get_options(&self) -> HashMap<String, String> {
-        let mut ret = crate::struct_to_map(&self);
-        ret.remove("url");
-        ret
-    }
-
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-        let ret = RcloneBackend::new(&self)?;
-        Ok(Arc::new(ret))
-    }
 }
 
 /// `RcloneBackend` is a backend that uses rclone to access a remote backend.
@@ -228,7 +154,11 @@ impl RcloneBackend {
     /// * If the rclone command is not found.
     // TODO: This should be an error, not a panic.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn new(config: &RcloneRepo) -> RusticResult<Self> {
+    pub(crate) fn new(config: &RcloneConfig) -> RusticResult<Self> {
+        let url = config.url.clone().ok_or(RusticError::new(
+            ErrorKind::Configuration,
+            "URL is invalid or does not exist",
+        ))?;
         let rclone_command = config.rclone_command.clone();
         let use_password = config.use_password.unwrap_or(true);
 
@@ -262,7 +192,7 @@ impl RcloneBackend {
                 err,
             )
         )?;
-        rclone_command.append_arg(config.url.to_string());
+        rclone_command.append_arg(url.to_string());
         debug!("starting rclone via {rclone_command:?}");
 
         let mut command = Command::new(rclone_command.command());
@@ -352,12 +282,12 @@ impl RcloneBackend {
             rest_url = format!("http://{user}:{password}@{}", &rest_url[7..]);
         }
 
-        debug!("using REST backend with url {}.", &config.url);
+        debug!("using REST backend with url {}.", &url);
         let rest_url = Url::parse(&rest_url).map_err(|err| {
             RusticError::with_source(ErrorKind::InputOutput, "URL is not valid", err)
         })?;
 
-        let rest_config = RestRepo::new(&rest_url);
+        let rest_config = RestConfig::new(&rest_url);
         let rest_be = RestBackend::new(&rest_config)?;
         let handle = Some(std::thread::spawn(move || {
             loop {
@@ -373,7 +303,7 @@ impl RcloneBackend {
 
         Ok(Self {
             child,
-            url: config.url.clone(),
+            url: url.clone(),
             rest: rest_be,
             handle,
         })

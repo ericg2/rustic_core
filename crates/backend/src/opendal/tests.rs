@@ -48,6 +48,7 @@ mod tests {
         // Make sure the repository can be serialized and de-serialized as well...
         let s_repo = serde_json::to_string(&repo)?;
         assert!(!s_repo.is_empty());
+        let d_repo = serde_json::from_str::<OpenDALConfig>(&s_repo);
 
         Ok(())
     }

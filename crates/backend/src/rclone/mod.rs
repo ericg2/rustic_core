@@ -1,3 +1,4 @@
-mod rclone_be;
+mod backend;
+mod config;
 
-pub use rclone_be::RcloneRepo;
+pub use config::RcloneConfig;

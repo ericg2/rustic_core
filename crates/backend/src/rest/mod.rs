@@ -1,4 +1,6 @@
-mod rest_be;
+mod backend;
+mod config;
 
-pub use rest_be::{RestRepo};
-pub(crate) use rest_be::RestBackend;
+pub use config::RestConfig;
+
+pub(crate) use backend::RestBackend;

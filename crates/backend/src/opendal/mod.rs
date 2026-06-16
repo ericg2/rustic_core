@@ -1,18 +1,20 @@
-mod opendal_be;
-mod opendal_dest;
-mod opendal_src;
-mod scheme;
+mod backend;
+mod destination;
+mod source;
 mod throttle;
 mod util;
 mod tests;
 
-pub use opendal_be::OpenDALRepo;
-pub use opendal_dest::OpenDALDestination;
-pub use opendal_src::OpenDALSource;
+mod config;
+
+pub use config::{OpenDALConfig, Scheme};
+pub use destination::OpenDALDestination;
+pub use source::OpenDALSource;
 pub use throttle::Throttle;
 
-pub(crate) use opendal_be::OpenDALBackend;
+pub(crate) use backend::OpenDALBackend;
 
+#[macro_export]
 macro_rules! opendal_add {
     ($($variant:ident),+ $(,)?) => {
         paste::paste! {
@@ -39,6 +41,11 @@ macro_rules! opendal_add {
             ///
             /// This enum is marked as `non_exhaustive`, so consumers should include
             /// a wildcard arm (`_`) when matching against it.
+            ///
+            /// # Valid Backends
+            $(
+                #[doc = stringify!($variant)]
+            )*
             pub enum Scheme {
                 /// A dynamic scheme that is unknown.
                 ///
@@ -63,6 +70,15 @@ macro_rules! opendal_add {
                    )]
                    $variant([<$variant Config>]),
                 )*
+            }
+            
+            impl Default for Scheme {
+                fn default() -> Self {
+                    Self::Dynamic {
+                        backend: String::new(),
+                        config: HashMap::new()
+                    }
+                }
             }
 
             impl Scheme {
@@ -242,26 +258,4 @@ macro_rules! opendal_add {
             }
         }
     };
-}
-
-/// Re-export of OpenDAL Config.
-///
-/// # Notes
-///
-/// SFTP is not supported on Windows.
-/// See https://github.com/apache/incubator-opendal/issues/2963.
-pub mod config {
-    #[cfg(windows)]
-    opendal_add!(
-        B2, Ftp, Swift, Azblob, Azdls, Azfile, Cos, Fs, Dropbox, Gdrive, Gcs,
-        Ghac, Http, Ipmfs, Memory, Obs, Onedrive, Oss, Pcloud, S3, Webdav,
-        Webhdfs, YandexDisk
-    );
-
-    #[cfg(not(windows))]
-    opendal_add!(
-        B2, Ftp, Swift, Azblob, Azdls, Azfile, Cos, Fs, Dropbox, Gdrive, Gcs,
-        Ghac, Http, Ipmfs, Memory, Obs, Onedrive, Oss, Pcloud, S3, Webdav,
-        Webhdfs, YandexDisk, Sftp
-    );
 }

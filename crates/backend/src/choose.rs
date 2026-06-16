@@ -9,10 +9,10 @@ use rustic_core::{
 
 use crate::util::{location_to_type_and_path, BackendLocation};
 
-use crate::local::LocalRepo;
-use crate::opendal::OpenDALRepo;
-use crate::rclone::RcloneRepo;
-use crate::rest::RestRepo;
+use crate::local::LocalConfig;
+use crate::opendal::OpenDALConfig;
+use crate::rclone::RcloneConfig;
+use crate::rest::RestConfig;
 #[cfg(feature = "clap")]
 use clap::ValueHint;
 use serde::de::DeserializeOwned;
@@ -74,7 +74,7 @@ impl BackendOptions {
     /// # Important
     /// This will automatically set the configuration. Do not use `options`.
     pub fn with_repo(mut self, repo: impl RepositoryConfig) -> Self {
-        self.repository = Some(repo.get_path());
+        self.repository = repo.get_path();
         self.options_cold = repo.get_options().into_iter().collect();
         self
     }
@@ -84,7 +84,7 @@ impl BackendOptions {
     /// # Important
     /// This will automatically set the configuration. Do not use `options`.
     pub fn with_repo_hot(mut self, repo: impl RepositoryConfig) -> Self {
-        self.repository = Some(repo.get_path());
+        self.repository = repo.get_path();
         self.options_hot = repo.get_options().into_iter().collect();
         self
     }
@@ -252,13 +252,13 @@ impl SupportedBackend {
     ) -> RusticResult<Arc<dyn RepositoryConfig>> {
         let options = options.unwrap_or_default();
         Ok(match self {
-            Self::Local => Arc::new(LocalRepo::from_iter(location, options)?),
+            Self::Local => Arc::new(LocalConfig::from_iter(location, options)),
             #[cfg(feature = "rclone")]
-            Self::Rclone => Arc::new(RcloneRepo::from_iter(location, options)?),
+            Self::Rclone => Arc::new(RcloneConfig::from_iter(location, options)),
             #[cfg(feature = "rest")]
-            Self::Rest => Arc::new(RestRepo::from_iter(location, options)?),
+            Self::Rest => Arc::new(RestConfig::from_iter(location, options)),
             #[cfg(feature = "opendal")]
-            Self::OpenDAL => Arc::new(OpenDALRepo::from_iter(location, options)),
+            Self::OpenDAL => Arc::new(OpenDALConfig::from_iter(location, options)),
         })
     }
 }

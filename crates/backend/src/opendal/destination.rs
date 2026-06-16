@@ -1,31 +1,29 @@
-use crate::opendal::opendal_src::OpenDALReader;
-use crate::opendal::{OpenDALBackend, OpenDALSource, OpenDALRepo};
+use crate::opendal::source::OpenDALReader;
+use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALSource};
+use crate::path_to_str;
 use bytes::Bytes;
+use derive_setters::Setters;
 use opendal::options::{DeleteOptions, ReadOptions, WriteOptions};
 use opendal::raw::BytesRange;
-use rustic_core::{Destination, ErrorKind, Metadata, Node, ReadSourceBuilder, RestoreOptions, RusticError, RusticResult, DestinationBuilder};
+use rustic_core::{
+    Destination, DestinationBuilder, ErrorKind, Metadata, Node, ReadSourceBuilder, RestoreOptions,
+    RusticError, RusticResult,
+};
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use derive_setters::Setters;
-use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
-use crate::path_to_str;
 
 /// OpenDAL destination, used when restoring.
 #[serde_as]
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Debug, Setters, Serialize, Deserialize)]
+#[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
 pub struct OpenDALDestination {
-    #[setters(skip)]
-    root: PathBuf,
-
-    #[setters(skip)]
-    config: OpenDALRepo,
+    pub root: Option<PathBuf>,
+    pub config: Option<OpenDALConfig>,
 }
 
 impl OpenDALDestination {
@@ -33,12 +31,12 @@ impl OpenDALDestination {
     ///
     /// # Arguments
     ///
-    /// * `config` - The [`OpenDALRepo`] to use.
     /// * `root` - The base path of the destination
-    pub fn new(config: &OpenDALRepo, root: impl AsRef<Path>) -> Self {
+    /// * `config` - The [`OpenDALRepo`] to use.
+    pub fn new(root: impl AsRef<Path>, config: &OpenDALConfig) -> Self {
         Self {
-            config: config.to_owned(),
-            root: root.as_ref().to_path_buf(),
+            root: Some(root.as_ref().to_path_buf()),
+            config: Some(config.to_owned()),
         }
     }
 }
@@ -47,23 +45,32 @@ impl DestinationBuilder for OpenDALDestination {
     type Output = OpenDALWriter;
 
     fn get_destination(&self) -> RusticResult<Self::Output> {
-        let be = OpenDALBackend::new(&self.config)?;
-        OpenDALWriter::new(Arc::new(be), &self)
+        // Make sure the fields are valid and filled in.
+        let root = self.root.as_ref().ok_or(RusticError::new(
+            ErrorKind::Configuration,
+            "Root is required for source.",
+        ))?;
+        let config = self.config.as_ref().ok_or(RusticError::new(
+            ErrorKind::Configuration,
+            "OpenDAL Config is required for source.",
+        ))?;
+
+        let be = OpenDALBackend::new(&config)?;
+        let ret = OpenDALWriter::new(Arc::new(be), root.clone(), config.clone());
+        Ok(ret)
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct OpenDALWriter {
-    dest: OpenDALDestination,
     be: Arc<OpenDALBackend>,
+    root: PathBuf,
+    config: OpenDALConfig,
 }
 
 impl OpenDALWriter {
-    pub(crate) fn new(be: Arc<OpenDALBackend>, dest: &OpenDALDestination) -> RusticResult<Self> {
-        Ok(Self {
-            be,
-            dest: dest.to_owned(),
-        })
+    pub(crate) fn new(be: Arc<OpenDALBackend>, root: PathBuf, config: OpenDALConfig) -> Self {
+        Self { be, root, config }
     }
 }
 
@@ -71,15 +78,15 @@ impl Destination for OpenDALWriter {
     type Reader = OpenDALReader;
 
     fn path(&self, path: &Path) -> PathBuf {
-        crate::join_force(&self.dest.root, path)
+        crate::join_force(&self.root, path)
     }
 
     fn read_source(&self) -> RusticResult<Self::Reader> {
-        OpenDALSource::new(&self.dest.config, &self.dest.root).get_reader()
+        OpenDALSource::new(&self.config, &self.root).get_reader()
     }
 
     fn remove_dir(&self, path: &Path) -> RusticResult<()> {
-        let path = path_to_str(&self.dest.root, path, true);
+        let path = path_to_str(&self.root, path, true);
         self.be
             .operator
             .delete_options(
@@ -96,7 +103,7 @@ impl Destination for OpenDALWriter {
     }
 
     fn remove_file(&self, path: &Path) -> RusticResult<()> {
-        let path = path_to_str(&self.dest.root, path, false);
+        let path = path_to_str(&self.root, path, false);
         self.be.operator.delete(&path).map_err(|err| {
             RusticError::with_source(ErrorKind::Backend, "Failed to remove file", err)
         })?;
@@ -104,7 +111,7 @@ impl Destination for OpenDALWriter {
     }
 
     fn create_dir_all(&self, path: &Path) -> RusticResult<()> {
-        let path = path_to_str(&self.dest.root, path, true);
+        let path = path_to_str(&self.root, path, true);
         self.be.operator.create_dir(&path).map_err(|err| {
             RusticError::with_source(ErrorKind::Backend, "Failed to read directory", err)
         })?;
@@ -121,7 +128,7 @@ impl Destination for OpenDALWriter {
     }
 
     fn set_length(&self, path: &Path, size: u64) -> RusticResult<()> {
-        let path = path_to_str(&self.dest.root, path, false);
+        let path = path_to_str(&self.root, path, false);
 
         if size == 0 {
             self.be
@@ -140,7 +147,7 @@ impl Destination for OpenDALWriter {
     }
 
     fn read_exact(&self, path: &Path, offset: u64, length: u64) -> RusticResult<Bytes> {
-        let path = path_to_str(&self.dest.root, path, false);
+        let path = path_to_str(&self.root, path, false);
         let mut buf = vec![0; length as usize];
         self.be
             .operator
@@ -163,7 +170,7 @@ impl Destination for OpenDALWriter {
     }
 
     fn get_existing(&self, path: &Path) -> RusticResult<Option<Metadata>> {
-        let path = path_to_str(&self.dest.root, path, false);
+        let path = path_to_str(&self.root, path, false);
         let meta = match self.be.operator.stat(&path) {
             Ok(meta) => meta,
             Err(err) if err.kind() == opendal::ErrorKind::NotFound => return Ok(None),
@@ -204,7 +211,7 @@ impl Destination for OpenDALWriter {
     }
 
     fn append(&self, path: &Path, data: &[u8]) -> RusticResult<()> {
-        let path = path_to_str(&self.dest.root, path, false);
+        let path = path_to_str(&self.root, path, false);
         self.be
             .operator
             .writer_options(

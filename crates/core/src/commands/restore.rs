@@ -9,7 +9,7 @@ use itertools::Itertools;
 use rayon::ThreadPoolBuilder;
 use std::io::Cursor;
 use std::path::Path;
-use std::sync::Condvar;
+use std::sync::{Arc, Condvar};
 use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Mutex};
 
 use crate::{

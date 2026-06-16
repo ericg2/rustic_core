@@ -19,92 +19,23 @@ use rustic_core::{
     ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, ReadBackend, RepositoryConfig,
     RusticError, RusticResult, WriteBackend,
 };
-
-#[serde_as]
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Debug, Setters, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-#[setters(into)]
-#[non_exhaustive]
-/// A local [`Repository`].
-pub struct LocalRepo {
-    /// The base path of the backend.
-    #[setters(skip)]
-    path: PathBuf,
-    /// The command to call after a file was created.
-    post_create_command: Option<String>,
-    /// The command to call after a file was deleted.
-    post_delete_command: Option<String>,
-}
-
-impl LocalRepo {
-    /// Creates a new [`LocalRepo`] with the given [`Path`].
-    pub fn new(path: impl AsRef<Path>) -> Self {
-        Self {
-            path: path.as_ref().to_path_buf(),
-            post_create_command: None,
-            post_delete_command: None,
-        }
-    }
-
-    /// Attempts to create a [`LocalRepo`] with the given iterator.
-    pub fn from_iter<K, V, I>(path: impl AsRef<str>, dict: I) -> RusticResult<Self>
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
-    {
-        let mut map: HashMap<String, String> = dict
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-
-        // inject path so serde can populate it
-        let _ = map.insert("path".to_string(), path.as_ref().to_string());
-        let config: Self = serde_json::to_value(map)
-            .and_then(serde_json::from_value)
-            .map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::Configuration,
-                    "Failed to deserialize OpenDAL config",
-                    err,
-                )
-            })?;
-
-        Ok(config)
-    }
-}
-
-impl RepositoryConfig for LocalRepo {
-    fn get_path(&self) -> String {
-        self.path.to_string_lossy().into_owned()
-    }
-
-    fn get_options(&self) -> HashMap<String, String> {
-        let mut ret = crate::struct_to_map(&self);
-        let _ = ret.remove("path");
-        ret
-    }
-
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-        let ret = LocalBackend::new(&self)?;
-        Ok(Arc::new(ret))
-    }
-}
+use crate::local::config::LocalConfig;
 
 /// A local backend.
 #[derive(Debug)]
-struct LocalBackend {
+pub struct LocalBackend {
     /// The base path of the backend.
-    config: LocalRepo,
+    path: PathBuf,
+    /// The config for this backend.
+    config: LocalConfig,
 }
 
 impl LocalBackend {
-    pub(crate) fn new(config: &LocalRepo) -> RusticResult<Self> {
-        Ok(Self {
-            config: config.clone()
-        })
+    pub(crate) fn new(path: PathBuf, config: LocalConfig) -> Self {
+        Self {
+            path,
+            config,
+        }
     }
 
     /// Base path of the given file type and id.
@@ -119,7 +50,7 @@ impl LocalBackend {
     /// The base path of the file.
     fn base_path(&self, tpe: FileType, id: &Id) -> PathBuf {
         let hex_id = id.to_hex();
-        let path = self.config.path.clone();
+        let path = self.path.clone();
         match tpe {
             FileType::Config => path,
             FileType::Pack => path.join("data").join(&hex_id[0..2]),
@@ -232,7 +163,7 @@ impl ReadBackend for LocalBackend {
     /// This is `local:<path>`.
     fn location(&self) -> String {
         let mut location = "local:".to_string();
-        location.push_str(&self.config.path.to_string_lossy());
+        location.push_str(&self.path.to_string_lossy());
         location
     }
 
@@ -266,7 +197,7 @@ impl ReadBackend for LocalBackend {
         }
 
         trace!("listing tpe: {tpe:?}");
-        let path = self.config.path.join(tpe.dirname());
+        let path = self.path.join(tpe.dirname());
 
         if tpe == FileType::Config {
             if path.exists() {
@@ -305,14 +236,14 @@ impl ReadBackend for LocalBackend {
     fn list(&self, tpe: FileType) -> RusticResult<Vec<Id>> {
         trace!("listing tpe: {tpe:?}");
         if tpe == FileType::Config {
-            return Ok(if self.config.path.join("config").exists() {
+            return Ok(if self.path.join("config").exists() {
                 vec![Id::default()]
             } else {
                 Vec::new()
             });
         }
 
-        let walker = WalkDir::new(self.config.path.join(tpe.dirname()))
+        let walker = WalkDir::new(self.path.join(tpe.dirname()))
             .into_iter()
             .inspect(|r| {
                 if let Err(err) = r {
@@ -441,18 +372,18 @@ impl WriteBackend for LocalBackend {
     ///
     /// * If the directory could not be created.
     fn create(&self) -> RusticResult<()> {
-        trace!("creating repo at {}", self.config.path.display());
-        fs::create_dir_all(&self.config.path).map_err(|err| {
+        trace!("creating repo at {}", self.path.display());
+        fs::create_dir_all(&self.path).map_err(|err| {
             RusticError::with_source(
                 ErrorKind::InputOutput,
                 "Failed to create the directory `{path}`. Please check the path and try again.",
                 err,
             )
-            .attach_context("path", self.config.path.display().to_string())
+            .attach_context("path", self.path.display().to_string())
         })?;
 
         for tpe in ALL_FILE_TYPES {
-            let path = self.config.path.join(tpe.dirname());
+            let path = self.path.join(tpe.dirname());
             fs::create_dir_all(path.clone()).map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::InputOutput,
@@ -464,7 +395,7 @@ impl WriteBackend for LocalBackend {
         }
 
         for i in 0u8..=255 {
-            let path = self.config.path.join("data").join(hex::encode([i]));
+            let path = self.path.join("data").join(hex::encode([i]));
             fs::create_dir_all(path.clone()).map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::InputOutput,
