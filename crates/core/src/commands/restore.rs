@@ -172,6 +172,7 @@ where
 {
     let p = repo.progress_spinner("collecting file information...");
     let dest_path = dest.path(Path::new(""));
+    dest.create_dir_all(Path::new("/"))?; // *** create the root directory here
 
     let mut stats = RestoreStats::default();
     let mut restore_infos = RestorePlan::default();
