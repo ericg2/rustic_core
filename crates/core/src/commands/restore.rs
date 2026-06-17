@@ -13,7 +13,7 @@ use std::sync::{Arc, Condvar};
 use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Mutex};
 
 use crate::{
-    Destination, ReadSourceEntry, ReadFileOpen,
+    Destination, ReadFileOpen, ReadSourceEntry,
     backend::{
         FileType, ReadBackend,
         decrypt::DecryptReadBackend,
@@ -179,6 +179,16 @@ where
     let mut additional_existing = false;
     let skip_dirs = DashSet::<PathBuf>::new();
 
+    fn clean_path(path: &Path) -> PathBuf {
+        Path::new(
+            path.to_string_lossy()
+                .replace("\\", "/")
+                .trim_start_matches("/")
+                .trim_end_matches("/"),
+        )
+        .to_path_buf()
+    }
+
     let next_entry = |walker: &mut W| -> Option<ReadSourceEntry<O>> {
         walker
             .inspect(|r| {
@@ -188,7 +198,12 @@ where
             })
             .find_map(|x| {
                 if let Some(ret) = x.ok() {
-                    if !skip_dirs.iter().any(|x| ret.path.starts_with(x.key())) {
+                    if !skip_dirs.iter().any(|x| {
+                        let check_a = clean_path(&ret.path);
+                        let check_b = clean_path(x.key());
+                        check_a.starts_with(check_b)
+                    }) {
+                        // We need to strip the prefix from the path to avoid "additionals".
                         return Some(ret);
                     }
                 }
@@ -198,7 +213,7 @@ where
 
     let mut process_existing =
         |walker: &mut W, entry: &ReadSourceEntry<O>| -> RusticResult<Option<ReadSourceEntry<O>>> {
-            if entry.path == dest_path {
+            if clean_path(&entry.path) == clean_path(&dest_path) {
                 // don't process the root dir which should be existing
                 return Ok(next_entry(walker));
             }
@@ -240,8 +255,7 @@ where
 
             // don't descend into extra dirs
             if is_dir {
-                skip_dirs.insert(entry.path.clone());
-                //walker.skip_current_dir();
+                let _ = skip_dirs.insert(entry.path.clone());
             }
             Ok(next_entry(walker))
         };
@@ -320,7 +334,7 @@ where
                 next_dst = process_existing(&mut walker, destination)?;
             }
             (Some(destination), Some((path, node))) => {
-                match destination.path.cmp(&dest.path(path)) {
+                match clean_path(&destination.path).cmp(&clean_path(&dest.path(path))) {
                     Ordering::Less => {
                         next_dst = process_existing(&mut walker, destination)?;
                     }

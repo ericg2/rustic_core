@@ -64,13 +64,16 @@ pub struct LocalSaveOptions {
 }
 
 fn strip_roots(path: &Path, roots: &Vec<PathBuf>) -> PathBuf {
-    for root in roots {
-        if let Ok(stripped) = path.strip_prefix(root) {
-            return PathBuf::from("/").join(stripped);
+    let ret = {
+        for root in roots {
+            if let Ok(stripped) = path.strip_prefix(root) {
+                return PathBuf::from("/").join(stripped);
+            }
         }
-    }
 
-    path.to_path_buf()
+        path.to_path_buf()
+    };
+    Path::new(&ret.to_string_lossy().replace("\\", "/")).to_path_buf()
 }
 
 impl LocalSaveOptions {
