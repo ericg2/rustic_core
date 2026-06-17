@@ -24,10 +24,10 @@ pub struct CommandSource {
 
 impl CommandSource {
     /// Creates a new [`CommandSource`] with the given command.
-    pub fn new(cmd: impl Into<CommandInput>, output: impl AsRef<Path>) -> Self {
+    pub fn new(cmd: &CommandInput, output: impl AsRef<Path>) -> Self {
         Self {
             output: Some(output.as_ref().to_path_buf()),
-            command: Some(cmd.into()),
+            command: Some(cmd.to_owned()),
         }
     }
 }
