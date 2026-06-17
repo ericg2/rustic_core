@@ -609,12 +609,14 @@ impl LocalWriter {
     }
 }
 
-impl Destination for LocalWriter {
-    type Reader = LocalReader;
-
+impl LocalWriter {
     fn path(&self, path: &Path) -> PathBuf {
         crate::join_force(&self.path, path)
     }
+}
+
+impl Destination for LocalWriter {
+    type Reader = LocalReader;
 
     fn read_source(&self) -> RusticResult<Self::Reader> {
         LocalSource::new(&self.path).get_reader()

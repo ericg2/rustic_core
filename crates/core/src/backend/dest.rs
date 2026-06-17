@@ -7,22 +7,6 @@ pub trait Destination: Send + Sync {
     /// The [`ReadSource`] to list files for this [`Destination`].
     type Reader: ReadSource;
     
-    /// Path to the given item (relative to the base path)
-    ///
-    /// # Arguments
-    ///
-    /// * `path` - The item to get the path for
-    ///
-    /// # Returns
-    ///
-    /// The path to the item.
-    ///
-    /// # Notes
-    ///
-    /// * If the destination is a file, this will return the base path.
-    /// * If the destination is a directory, this will return the base path joined with the item.
-    fn path(&self, path: &Path) -> PathBuf;
-    
     /// Attempts to read current files in [`Destination`].
     /// 
     /// # Errors

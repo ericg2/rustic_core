@@ -171,7 +171,6 @@ where
     O: ReadFileOpen,
 {
     let p = repo.progress_spinner("collecting file information...");
-    let dest_path = dest.path(Path::new(""));
     dest.create_dir_all(Path::new("/"))?; // *** create the root directory here
 
     let mut stats = RestoreStats::default();
@@ -213,7 +212,7 @@ where
 
     let mut process_existing =
         |walker: &mut W, entry: &ReadSourceEntry<O>| -> RusticResult<Option<ReadSourceEntry<O>>> {
-            if clean_path(&entry.path) == clean_path(&dest_path) {
+            if clean_path(&entry.path) == clean_path(Path::new("/")) {
                 // don't process the root dir which should be existing
                 return Ok(next_entry(walker));
             }
@@ -334,7 +333,10 @@ where
                 next_dst = process_existing(&mut walker, destination)?;
             }
             (Some(destination), Some((path, node))) => {
-                match clean_path(&destination.path).cmp(&clean_path(&dest.path(path))) {
+                let path_a = clean_path(&destination.path);
+                let path_b = clean_path(path);
+                trace!("comparing {:?} with {:?}", &path_a, &path_b);
+                match path_a.cmp(&path_b) {
                     Ordering::Less => {
                         next_dst = process_existing(&mut walker, destination)?;
                     }

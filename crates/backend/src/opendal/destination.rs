@@ -77,10 +77,6 @@ impl OpenDALWriter {
 impl Destination for OpenDALWriter {
     type Reader = OpenDALReader;
 
-    fn path(&self, path: &Path) -> PathBuf {
-        crate::join_force(&self.root, path)
-    }
-
     fn read_source(&self) -> RusticResult<Self::Reader> {
         OpenDALSource::new(&self.config, &self.root).get_reader()
     }
