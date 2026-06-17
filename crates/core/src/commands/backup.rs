@@ -192,7 +192,7 @@ pub struct BackupOptions {
 pub(crate) fn backup<R, S>(
     repo: &Repository<S>,
     opts: &BackupOptions,
-    src: &R,
+    src: R,
     mut snap: SnapshotFile,
 ) -> RusticResult<SnapshotFile>
 where
@@ -252,15 +252,16 @@ where
     info!("starting to backup {backup_paths:?} ...");
     let archiver = Archiver::new(be, index, repo.config(), parent, snap)?;
     let p = repo.progress_bytes("backing up...");
-
-    archiver.archive(
-        src,
+    let snap = archiver.archive(
+        &src,
         &backup_paths[0],
         as_path.as_ref(),
         opts.parent_opts.skip_if_unchanged,
         opts.no_scan,
         &p,
-    )
+    )?;
+    src.close()?;
+    Ok(snap)
 }
 //
 // Backup data, create a snapshot.

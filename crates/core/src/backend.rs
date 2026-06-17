@@ -564,6 +564,9 @@ pub trait ReadSource: Sync + Send {
     ///
     /// All roots of the lookup. Some may not exist due to filters.
     fn paths(&self) -> Vec<PathBuf>;
+
+    /// Closes the [`ReadSource`] and consumes itself.
+    fn close(self) -> RusticResult<()>;
 }
 
 /// The backends a repository can be initialized and operated on

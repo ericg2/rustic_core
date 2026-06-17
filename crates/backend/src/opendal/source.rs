@@ -132,6 +132,10 @@ impl ReadSource for OpenDALReader {
     fn paths(&self) -> Vec<PathBuf> {
         self.paths.clone()
     }
+
+    fn close(self) -> RusticResult<()> {
+        Ok(())
+    }
 }
 
 impl OpenDALReader {

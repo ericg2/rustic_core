@@ -77,4 +77,8 @@ impl ReadSource for StdinReader {
     fn paths(&self) -> Vec<PathBuf> {
         vec![self.output.clone()]
     }
+
+    fn close(self) -> RusticResult<()> {
+        Ok(())
+    }
 }

@@ -130,4 +130,8 @@ impl ReadSource for StdoutReader {
     fn paths(&self) -> Vec<PathBuf> {
         vec![self.output.clone()]
     }
+
+    fn close(self) -> RusticResult<()> {
+        self.finish()
+    }
 }

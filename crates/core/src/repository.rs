@@ -1679,7 +1679,7 @@ impl<S: IndexedIds> Repository<S> {
         <<R as ReadSourceBuilder>::Reader as ReadSource>::Iter: Send,
         <<R as ReadSourceBuilder>::Reader as ReadSource>::Open: Send,
     {
-        commands::backup::backup(self, opts, &source.get_reader()?, snap)
+        commands::backup::backup(self, opts, source.get_reader()?, snap)
     }
 
     // /// Run a backup of `source` using a `ReadSource`.

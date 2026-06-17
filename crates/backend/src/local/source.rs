@@ -251,6 +251,10 @@ impl ReadSource for LocalReader {
     fn paths(&self) -> Vec<PathBuf> {
         self.src.paths.clone()
     }
+
+    fn close(self) -> RusticResult<()> {
+        Ok(())
+    }
 }
 
 #[serde_as]
