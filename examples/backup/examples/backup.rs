@@ -3,7 +3,7 @@ use rustic_backend::BackendOptions;
 use rustic_core::{BackupOptions, Credentials, PathList, Repository, RepositoryOptions, SnapshotOptions};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
-use rustic_backend::local::{LocalRepo, LocalSource};
+use rustic_backend::local::{LocalConfig, LocalSource};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Display info logs
@@ -11,8 +11,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Initialize Backends
     let backends = BackendOptions::default()
-        .with_repo(LocalRepo::new("/tmp/repo"))
-        .with_repo_hot(LocalRepo::new("/tmp/repo2"))
+        .with_repo(LocalConfig::new("/tmp/repo"))
+        .with_repo_hot(LocalConfig::new("/tmp/repo2"))
         .to_backends()?;
 
     // Open repository

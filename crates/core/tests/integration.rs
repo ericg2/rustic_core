@@ -51,10 +51,10 @@ use insta::{
     internals::{Content, ContentPath},
 };
 use rstest::fixture;
-use rustic_backend::local::LocalRepo;
 use serde::Serialize;
 use tar::Archive;
 use tempfile::{TempDir, tempdir};
+use rustic_backend::local::LocalConfig;
 // uncomment for logging output
 // use simplelog::{Config, SimpleLogger};
 
@@ -107,7 +107,7 @@ fn repo_from_fixture(dir: &TempDir, repo_file: &str) -> Result<RepoOpen> {
     let mut archive = Archive::new(tar);
     archive.unpack(dir)?;
 
-    let be = LocalRepo::new(dir.path().join("repo").to_str().unwrap()).get_repo()?;
+    let be = LocalConfig::new(dir.path().join("repo").to_str().unwrap()).get_repo()?;
     let be = RepositoryBackends::new(Arc::new(be), None);
     let options = RepositoryOptions::default();
     let repo = Repository::new(&options, &be)?.open(&Credentials::password("geheim"))?;
