@@ -119,6 +119,7 @@ pub(crate) fn restore_repository<S: IndexedTree>(
     dest: &impl Destination,
 ) -> RusticResult<()> {
     repo.warm_up_wait(file_infos.to_packs().into_iter())?;
+    dest.create_dir_all(Path::new("/"))?; // *** create the root directory here.
     restore_contents(
         repo,
         dest,
