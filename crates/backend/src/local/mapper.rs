@@ -27,26 +27,39 @@ pub enum BlockdevOption {
     File,
 }
 
+
 #[serde_as]
+#[cfg_attr(feature = "clap", derive(clap::Parser))]
+#[cfg_attr(feature = "merge", derive(conflate::Merge))]
 #[derive(serde::Deserialize, serde::Serialize, Default, Clone, Copy, Debug, Setters)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 #[setters(into)]
 #[non_exhaustive]
-/// [`LocalSaveOptions`] describes how entries from a local source will be saved in the repository.
+/// [`LocalSourceSaveOptions`] describes how entries from a local source will be saved in the repository.
 pub struct LocalSaveOptions {
     /// Set access time [default: mtime]
+    #[cfg_attr(feature = "clap", clap(long))]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub set_atime: Option<TimeOption>,
 
     /// Set changed time [default: yes]
+    #[cfg_attr(feature = "clap", clap(long))]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub set_ctime: Option<TimeOption>,
 
     /// Set device ID [default: hardlink]
+    #[cfg_attr(feature = "clap", clap(long))]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub set_devid: Option<DevIdOption>,
 
     /// How block devices should be stored [default: special]
+    #[cfg_attr(feature = "clap", clap(long))]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub set_blockdev: Option<BlockdevOption>,
 
     /// Set extended attributes [default: yes]
+    #[cfg_attr(feature = "clap", clap(long))]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub set_xattrs: Option<XattrOption>,
 }
 
