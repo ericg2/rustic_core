@@ -178,15 +178,15 @@ where
     let mut additional_existing = false;
     let skip_dirs = DashSet::<PathBuf>::new();
 
-    fn clean_path(path: &Path) -> PathBuf {
+    let clean_path = |path: &Path| -> PathBuf {
         Path::new(
             path.to_string_lossy()
                 .replace("\\", "/")
                 .trim_start_matches("/")
                 .trim_end_matches("/"),
         )
-        .to_path_buf()
-    }
+            .to_path_buf()
+    };
 
     let next_entry = |walker: &mut W| -> Option<ReadSourceEntry<O>> {
         walker

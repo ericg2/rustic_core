@@ -108,9 +108,12 @@ impl Destination for OpenDALWriter {
 
     fn create_dir_all(&self, path: &Path) -> RusticResult<()> {
         let path = path_to_str(&self.root, path, true);
-        self.be.operator.create_dir(&path).map_err(|err| {
-            RusticError::with_source(ErrorKind::Backend, "Failed to read directory", err)
-        })?;
+        if path != "/" {
+            // OpenDAL does not allow creating a root directory. Don't do this on restore!
+            self.be.operator.create_dir(&path).map_err(|err| {
+                RusticError::with_source(ErrorKind::Backend, "Failed to read directory", err)
+            })?;
+        }
         Ok(())
     }
 
