@@ -664,6 +664,7 @@ fn restore_contents<S: Open>(
                                     Box::new(dest.get_writer(path).unwrap().open_replace().unwrap())
                                 });
                                 handle.write_all(&data).unwrap();
+                                handle.flush().unwrap();
                                 state.cursor += data.len() as u64;
                                 condvar.notify_all();
                             }
