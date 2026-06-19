@@ -498,7 +498,7 @@ fn restore_contents<S: Open>(
     // For append: truncate ALL files to 0 now so appends start from a clean
     // slate (no stale content, no pre-allocated zeros causing over-length output).
     for (i, size) in file_lengths.iter().enumerate() {
-        if *size == 0 || !dest.can_random_write() {
+        if *size == 0 {
             let path = &filenames[i];
             if let Some(parent) = path.parent() {
                 dest.create_dir_all(parent)?;

@@ -3,7 +3,7 @@ use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALDestination};
 
 use log::warn;
 use opendal::blocking::{StdReader, StdWriter};
-use opendal::options::ListOptions;
+use opendal::options::{ListOptions, WriteOptions};
 use opendal::{Builder, Configurator, Entry, IntoOperatorUri};
 
 use rustic_core::{
@@ -96,16 +96,9 @@ pub struct OpenDALHandle(StdWriter);
 
 impl WriteHandle for OpenDALHandle {
     fn close(&mut self) -> RusticResult<()> {
-        self.0
-            .flush()
-            .and_then(|_| self.0.close())
-            .map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::InputOutput,
-                    "Failed to close OpenDAL file",
-                    err,
-                )
-            })
+        self.0.flush().and_then(|_| self.0.close()).map_err(|err| {
+            RusticError::with_source(ErrorKind::InputOutput, "Failed to close OpenDAL file", err)
+        })
     }
 }
 
@@ -127,7 +120,13 @@ impl WriteFileOpen for OpenDALFile {
         let writer = self
             .0
             .operator
-            .writer(&path)
+            .writer_options(
+                &path,
+                WriteOptions {
+                    append: false,
+                    ..Default::default()
+                },
+            )
             .and_then(|r| Ok(r.into_std_write()))
             .map_err(|err| {
                 RusticError::with_source(
