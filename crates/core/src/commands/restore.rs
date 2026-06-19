@@ -5,11 +5,18 @@ use derive_setters::Setters;
 use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
-use crate::{Destination, ReadFileOpen, ReadSourceEntry, WriteFileOpen, backend::{
-    FileType, ReadBackend,
-    decrypt::DecryptReadBackend,
-    node::{Node, NodeType},
-}, blob::{BlobLocation, BlobLocations}, error::{ErrorKind, RusticError, RusticResult}, repofile::packfile::PackId, repository::{IndexedFull, IndexedTree, Open, Repository}, WriteHandle};
+use crate::{
+    Destination, ReadFileOpen, ReadSourceEntry, WriteFileOpen, WriteHandle,
+    backend::{
+        FileType, ReadBackend,
+        decrypt::DecryptReadBackend,
+        node::{Node, NodeType},
+    },
+    blob::{BlobLocation, BlobLocations},
+    error::{ErrorKind, RusticError, RusticResult},
+    repofile::packfile::PackId,
+    repository::{IndexedFull, IndexedTree, Open, Repository},
+};
 use bytes::Bytes;
 use dashmap::{DashMap, DashSet};
 use itertools::Itertools;
@@ -985,38 +992,67 @@ impl RestorePlan {
 
         let file_idx = self.names.len();
         self.names.push(name.clone());
-        let mut file_pos = 0;
+        let mut file_pos: u64 = 0;
         let mut has_unmatched = false;
+        let mut matched_size = 0;
+        let mut restore_size = 0;
+
+        // On append-only destinations, one mismatch means the whole file gets
+        // rewritten, so any blobs already marked "matched" need flipping. We
+        // remember them here just in case; this stays empty (and unused) on
+        // random-write destinations, and gets drained+cleared the moment the
+        // first mismatch is found, so it's never a second full pass.
+        let mut matched = Vec::new();
+
         for id in file.content.iter().flatten() {
             let ie = repo.get_index_entry(id)?;
             let bl = ie.location;
             let length: u64 = bl.data_length().into();
+            let key = (ie.pack, bl);
 
-            let mut matches = false;
-            let blob_location = self.r.entry((ie.pack, bl)).or_default();
-            blob_location.push(FileLocation {
+            // Append-only backends (like OpenDAL) only allow a whole file replacement.
+            // As a result, we can skip reading from `dest` as soon as we know the file
+            // is different - since it needs to get replaced anyway.
+            let should_read = !has_unmatched || dest.can_random_write();
+            let matches = should_read
+                && open
+                    .as_mut()
+                    .is_some_and(|open| id.blob_matches_reader(length, open));
+
+            if matches {
+                matched_size += length;
+                if !dest.can_random_write() {
+                    matched.push((key.clone(), length));
+                }
+            } else {
+                if !has_unmatched && !dest.can_random_write() {
+                    // First mismatch on an append-only destination: flip
+                    // everything we tentatively counted as matched so far.
+                    for (k, len) in matched.drain(..) {
+                        if let Some(last) = self.r.get_mut(&k).and_then(|v| v.last_mut()) {
+                            last.matches = false;
+                        }
+                        matched_size -= len;
+                        restore_size += len;
+                    }
+                }
+                restore_size += length;
+                has_unmatched = true;
+            }
+
+            self.r.entry(key).or_default().push(FileLocation {
                 file_idx,
                 file_start: file_pos,
                 matches,
             });
 
-            // We can skip reading from `dest` as soon as we know the file is different.
-            let should_read = !has_unmatched || dest.can_random_write();
-            if should_read && let Some(mut open) = open.as_mut() {
-                matches = id.blob_matches_reader(length, &mut open);
-            }
-
-            if !matches {
-                has_unmatched = true;
-            }
-
-            self.restore_size += length;
             file_pos += length;
         }
 
+        self.restore_size += restore_size;
+        self.matched_size += matched_size;
         self.file_lengths.push(file_pos);
 
-        // TODO: FIXME: optimize!
         if !has_unmatched && existing_file.is_some() {
             Ok(AddFileResult::Verified)
         } else {
