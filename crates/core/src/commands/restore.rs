@@ -58,6 +58,10 @@ pub struct RestoreOptions {
     #[cfg_attr(feature = "clap", clap(long, conflicts_with = "numeric_id"))]
     pub no_ownership: bool,
 
+    /// Do not scan file contents in the destination (only check hash if available).
+    #[cfg_attr(feature = "clap", clap(long, conflicts_with = "verify_existing"))]
+    pub no_compare: bool,
+
     /// Always read and verify existing files (don't trust correct modification time and file size)
     #[cfg_attr(feature = "clap", clap(long))]
     pub verify_existing: bool,
@@ -296,7 +300,14 @@ where
                 // collect blobs needed for restoring
                 match (
                     exists,
-                    restore_infos.add_file(dest, node, path.clone(), repo, opts.verify_existing)?,
+                    restore_infos.add_file(
+                        dest,
+                        node,
+                        path.clone(),
+                        repo,
+                        opts.verify_existing,
+                        opts.no_compare,
+                    )?,
                 ) {
                     // Note that exists = false and Existing or Verified can happen if the file is changed between scanning the dir
                     // and calling add_file. So we don't care about exists but trust add_file here.
@@ -949,6 +960,7 @@ impl RestorePlan {
     /// * `name` - The name of the file.
     /// * `repo` - The repository to restore.
     /// * `ignore_mtime` - If true, ignore the modification time of the file.
+    /// * `no_compare` - If true, do not scan the source files.
     ///
     /// # Errors
     ///
@@ -960,6 +972,7 @@ impl RestorePlan {
         name: PathBuf,
         repo: &Repository<S>,
         ignore_mtime: bool,
+        no_read: bool,
     ) -> RusticResult<AddFileResult> {
         let existing_file = dest
             .get_existing(&name)?
@@ -984,7 +997,11 @@ impl RestorePlan {
             }
         }
 
-        let mut open = if existing_file.is_some() {
+        // If no_read is set, we never read the destination's content - some object
+        // storages charge enough for downloads that it's cheaper to just re-upload.
+        // In that case every blob below is treated as unverified; the mtime check
+        // above is the only way this file can come back as Existing/Verified.
+        let mut open = if !no_read && existing_file.is_some() {
             Some(dest.get_reader(&name)?.open()?)
         } else {
             None
@@ -998,11 +1015,11 @@ impl RestorePlan {
         let mut restore_size = 0;
 
         // On append-only destinations, one mismatch means the whole file gets
-        // rewritten, so any blobs already marked "matched" need flipping. We
+        // replaced, so any blobs already marked "matched" need flipping. We
         // remember them here just in case; this stays empty (and unused) on
         // random-write destinations, and gets drained+cleared the moment the
         // first mismatch is found, so it's never a second full pass.
-        let mut matched = Vec::new();
+        let mut tentatively_matched = Vec::new();
 
         for id in file.content.iter().flatten() {
             let ie = repo.get_index_entry(id)?;
@@ -1022,13 +1039,13 @@ impl RestorePlan {
             if matches {
                 matched_size += length;
                 if !dest.can_random_write() {
-                    matched.push((key.clone(), length));
+                    tentatively_matched.push((key.clone(), length));
                 }
             } else {
                 if !has_unmatched && !dest.can_random_write() {
                     // First mismatch on an append-only destination: flip
                     // everything we tentatively counted as matched so far.
-                    for (k, len) in matched.drain(..) {
+                    for (k, len) in tentatively_matched.drain(..) {
                         if let Some(last) = self.r.get_mut(&k).and_then(|v| v.last_mut()) {
                             last.matches = false;
                         }
