@@ -95,7 +95,7 @@ impl ReadFileOpen for OpenDALFile {
 pub struct OpenDALHandle(StdWriter);
 
 impl WriteHandle for OpenDALHandle {
-    fn close(mut self) -> RusticResult<()> {
+    fn close(&mut self) -> RusticResult<()> {
         self.0
             .flush()
             .and_then(|_| self.0.close())

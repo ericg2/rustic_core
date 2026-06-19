@@ -5,18 +5,11 @@ use derive_setters::Setters;
 use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
-use crate::{
-    Destination, ReadFileOpen, ReadSourceEntry, WriteFileOpen,
-    backend::{
-        FileType, ReadBackend,
-        decrypt::DecryptReadBackend,
-        node::{Node, NodeType},
-    },
-    blob::{BlobLocation, BlobLocations},
-    error::{ErrorKind, RusticError, RusticResult},
-    repofile::packfile::PackId,
-    repository::{IndexedFull, IndexedTree, Open, Repository},
-};
+use crate::{Destination, ReadFileOpen, ReadSourceEntry, WriteFileOpen, backend::{
+    FileType, ReadBackend,
+    decrypt::DecryptReadBackend,
+    node::{Node, NodeType},
+}, blob::{BlobLocation, BlobLocations}, error::{ErrorKind, RusticError, RusticResult}, repofile::packfile::PackId, repository::{IndexedFull, IndexedTree, Open, Repository}, WriteHandle};
 use bytes::Bytes;
 use dashmap::{DashMap, DashSet};
 use itertools::Itertools;
@@ -485,7 +478,7 @@ impl PackInfo {
 
 struct AppendState {
     cursor: u64,
-    handle: Option<Box<dyn Write + Send + Sync + 'static>>,
+    handle: Option<Box<dyn WriteHandle>>,
 }
 
 #[allow(clippy::too_many_lines)]
@@ -675,6 +668,14 @@ fn restore_contents<S: Open>(
             });
         }
     });
+
+    // Finally, close all handles to ensure files are written.
+    for (state_mutex, _) in write_state {
+        let mut state = state_mutex.lock().unwrap();
+        if let Some(mut handle) = state.handle.take() {
+            handle.close()?;
+        }
+    }
 
     p.finish();
     Ok(())

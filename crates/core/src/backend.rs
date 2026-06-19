@@ -465,7 +465,7 @@ pub trait ReadFileOpen {
 pub trait SeekFileOpen: ReadFileOpen<Reader: Seek> {}
 
 pub trait WriteHandle: Write + Send + Sync + 'static {
-    fn close(mut self) -> RusticResult<()>;
+    fn close(&mut self) -> RusticResult<()>;
 }
 
 pub trait WriteFileOpen {
@@ -485,7 +485,7 @@ pub trait WriteFileOpen {
 }
 
 impl WriteHandle for File {
-    fn close(self) -> RusticResult<()> {
+    fn close(&mut self) -> RusticResult<()> {
         Ok(())
     }
 }
