@@ -129,8 +129,9 @@ pub use jiff;
 // rustic_core Public API
 pub use crate::{
     backend::{
-        ALL_FILE_TYPES, FileType, ReadBackend, ReadSource, ReadSourceBuilder, ReadSourceEntry,
-        ReadFileOpen, RepositoryBackends, RepositoryConfig, WriteBackend, DestinationBuilder,
+        ALL_FILE_TYPES, DestinationBuilder, FileType, ReadBackend, ReadFileOpen, ReadSource,
+        ReadSourceBuilder, ReadSourceEntry, RepositoryBackends, RepositoryConfig, SeekFileOpen,
+        WriteBackend, WriteFileOpen,
         decrypt::{compression_level_range, max_compression_level},
         dest::Destination,
         filters::FilterOptions,

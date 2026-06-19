@@ -25,6 +25,7 @@ use serde::de::DeserializeOwned;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::io::{Seek, Write};
 use std::{io::Read, ops::Deref, path::PathBuf, sync::Arc};
 
 /// [`BackendErrorKind`] describes the errors that can be returned by the various Backends
@@ -443,11 +444,10 @@ impl<O> ReadSourceEntry<O> {
     }
 }
 
-/// Trait for backends that can read and open sources.
-/// This trait is implemented by all backends that can read data and open from a source.
+/// Ability for a backend to read a file from beginning to end.
 pub trait ReadFileOpen {
     /// The Reader used for this source
-    type Reader: Read + Send + 'static;
+    type Reader: Read + Send + Sync + 'static;
 
     /// Opens the source.
     ///
@@ -459,6 +459,24 @@ pub trait ReadFileOpen {
     ///
     /// The reader used to read from the source.
     fn open(self) -> RusticResult<Self::Reader>;
+}
+
+pub trait SeekFileOpen: ReadFileOpen<Reader: Seek> {}
+
+pub trait WriteFileOpen {
+    /// The Writer used for this source.
+    type Writer: Write + Send + Sync + 'static;
+
+    /// Opens the source. A file will be created if not exist.
+    ///
+    /// # Errors
+    ///
+    /// * If the source could not be opened.
+    ///
+    /// # Result
+    ///
+    /// The reader used to read from the source.
+    fn open_replace(self) -> RusticResult<Self::Writer>;
 }
 
 /// Trait for backends that can be restored to.
@@ -528,11 +546,19 @@ impl<T: RepositoryConfig + ?Sized> RepositoryConfig for &T {
 }
 
 /// blanket implementation for readers
-impl<T: Read + Send + 'static> ReadFileOpen for T {
+impl<T: Read + Send + Sync + 'static> ReadFileOpen for T {
     type Reader = T;
+
     fn open(self) -> RusticResult<Self::Reader> {
         Ok(self)
     }
+}
+
+impl<T> SeekFileOpen for T
+where
+    T: ReadFileOpen,
+    T::Reader: Seek,
+{
 }
 
 /// Trait for backends that can read from a source.

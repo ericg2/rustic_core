@@ -1,19 +1,12 @@
 //! `restore` subcommand
 
+use crate::backend::SeekFileOpen;
 use derive_setters::Setters;
 use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
-use dashmap::DashSet;
-use itertools::Itertools;
-use rayon::ThreadPoolBuilder;
-use std::io::Cursor;
-use std::path::Path;
-use std::sync::{Arc, Condvar};
-use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Mutex};
-
 use crate::{
-    Destination, ReadFileOpen, ReadSourceEntry,
+    Destination, ReadFileOpen, ReadSourceEntry, WriteFileOpen,
     backend::{
         FileType, ReadBackend,
         decrypt::DecryptReadBackend,
@@ -24,6 +17,15 @@ use crate::{
     repofile::packfile::PackId,
     repository::{IndexedFull, IndexedTree, Open, Repository},
 };
+use bytes::Bytes;
+use dashmap::{DashMap, DashSet};
+use itertools::Itertools;
+use rayon::ThreadPoolBuilder;
+use std::collections::HashMap;
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::path::Path;
+use std::sync::{Arc, Condvar};
+use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Mutex};
 
 pub(crate) mod constants {
     /// The maximum number of reader threads to use for restoring.
@@ -185,7 +187,7 @@ where
                 .trim_start_matches("/")
                 .trim_end_matches("/"),
         )
-            .to_path_buf()
+        .to_path_buf()
     };
 
     let next_entry = |walker: &mut W| -> Option<ReadSourceEntry<O>> {
@@ -480,6 +482,12 @@ impl PackInfo {
         }
     }
 }
+
+struct AppendState {
+    cursor: u64,
+    handle: Option<Box<dyn Write + Send + Sync + 'static>>,
+}
+
 #[allow(clippy::too_many_lines)]
 fn restore_contents<S: Open>(
     repo: &Repository<S>,
@@ -492,11 +500,10 @@ fn restore_contents<S: Open>(
     let be = repo.dbe();
     let num_files = file_lengths.len();
 
-    // For random-write: create empty files now, non-empty files are lazily
-    // allocated on first write via the sizes mutex.
+    // For random-write: create empty files now; non-empty files
+    // are lazily allocated on first write via the sizes mutex.
     // For append: truncate ALL files to 0 now so appends start from a clean
-    // slate (no stale content, no pre-allocated zeros that would cause
-    // over-length output).
+    // slate (no stale content, no pre-allocated zeros causing over-length output).
     for (i, size) in file_lengths.iter().enumerate() {
         if *size == 0 || !dest.can_random_write() {
             let path = &filenames[i];
@@ -518,17 +525,26 @@ fn restore_contents<S: Open>(
     // (set to their full size) before the first write_at.
     let sizes = &Mutex::new(file_lengths);
 
-    // Append path: per-file cursor + condvar so that concurrent threads
-    // always append in offset order. Data waits on the calling thread's
-    // stack — nothing is heap-buffered while blocking.
-    let write_cursors: Vec<(Mutex<u64>, Condvar)> = (0..num_files)
-        .map(|_| (Mutex::new(0u64), Condvar::new()))
+    // Append path: per-file cursor + condvar so concurrent threads always
+    // append in offset order. The open write handle lives here too, so a
+    // single lock covers both — no DashMap needed.
+    let write_state: Vec<(Mutex<AppendState>, Condvar)> = (0..num_files)
+        .map(|_| {
+            (
+                Mutex::new(AppendState {
+                    cursor: 0,
+                    handle: None,
+                }),
+                Condvar::new(),
+            )
+        })
         .collect();
-    let write_cursors = &write_cursors;
 
+    let write_state = &write_state;
     let p = repo.progress_bytes("restoring file contents...");
     p.set_length(restore_size);
 
+    let p = &p;
     let packs: Vec<_> = restore_info
         .into_iter()
         .map(|((pack_id, bl), fls)| {
@@ -549,7 +565,6 @@ fn restore_contents<S: Open>(
                 locations: BlobLocations::from_blob_location(bl, name_dests),
             }
         })
-        // optimize reading from backend by reading many blobs in a row
         .coalesce(PackInfo::coalesce)
         .collect();
 
@@ -571,96 +586,298 @@ fn restore_contents<S: Open>(
             pack_id,
             from_file,
             locations:
-            BlobLocations {
-                offset,
-                length,
-                blobs,
-            },
+                BlobLocations {
+                    offset,
+                    length,
+                    blobs,
+                },
         } in packs
         {
-            let p = &p;
-            if !blobs.is_empty() {
-                // TODO: error handling!
-                s.spawn(move |s1| {
-                    let read_data = match (dest.can_random_write(), &from_file) {
-                        (true, Some((file_idx, offset_file, length_file))) => dest
-                            .read_exact(
-                                &filenames[*file_idx],
-                                *offset_file,
-                                (*length_file).into(),
-                            )
-                            .unwrap(),
+            if blobs.is_empty() {
+                continue;
+            }
+            s.spawn(move |s1| {
+                let read_data = match (dest.can_random_write(), &from_file) {
+                    (true, Some((file_idx, offset_file, length_file))) => {
+                        let length: u64 = (*length_file).into();
+                        let offset: u64 = *offset_file;
+                        let path = &filenames[*file_idx];
+                        let mut buf = vec![0; length as usize];
+                        let mut file = dest.get_reader(path).and_then(|x| x.open()).unwrap();
+                        let _ = file.seek(SeekFrom::Start(offset)).unwrap();
+                        file.read_exact(&mut buf).unwrap();
+                        Bytes::from(buf)
+                    }
+                    _ => be
+                        .read_partial(FileType::Pack, &pack_id, false, offset, length)
+                        .unwrap(),
+                };
 
-                        _ => be
-                            .read_partial(FileType::Pack, &pack_id, false, offset, length)
-                            .unwrap(),
+                for (bl, name_dests) in blobs {
+                    let size: u64 = bl.data_length().into();
+                    let data = if dest.can_random_write() && from_file.is_some() {
+                        read_data.clone()
+                    } else {
+                        let start = usize::try_from(bl.offset - offset)
+                            .expect("bl.offset - offset overflows usize");
+                        let end = usize::try_from(bl.offset + bl.length - offset)
+                            .expect("bl.offset + bl.length - offset overflows usize");
+                        be.read_encrypted_from_partial(
+                            &read_data[start..end],
+                            bl.uncompressed_length,
+                        )
+                        .unwrap()
                     };
 
-                    // save into needed files in parallel
-                    for (bl, name_dests) in blobs {
-                        let size = bl.data_length().into();
-                        let data = if dest.can_random_write() && from_file.is_some() {
-                            read_data.clone()
-                        } else {
-                            let start = usize::try_from(bl.offset - offset)
-                                .expect("convert from u32 to usize should not fail!");
-                            let end = usize::try_from(bl.offset + bl.length - offset)
-                                .expect("convert from u32 to usize should not fail!");
-                            be.read_encrypted_from_partial(
-                                &read_data[start..end],
-                                bl.uncompressed_length,
-                            )
-                                .unwrap()
-                        };
-                        for (file_idx, start) in name_dests {
-                            let data = data.clone();
-                            s1.spawn(move |_| {
-                                let path = &filenames[file_idx];
-                                if dest.can_random_write() {
-                                    // Allocate file if it is not yet allocated
-                                    let mut sizes_guard = sizes.lock().unwrap();
-                                    let filesize = sizes_guard[file_idx];
-                                    if filesize > 0 {
-                                        if let Some(parent) = path.parent() {
-                                            dest.create_dir_all(parent).unwrap();
-                                        }
-                                        dest.set_length(path, filesize).unwrap();
-                                        sizes_guard[file_idx] = 0;
+                    for (file_idx, start) in name_dests {
+                        let data = data.clone();
+                        s1.spawn(move |_| {
+                            let path = &filenames[file_idx];
+                            if dest.can_random_write() {
+                                // Lazily allocate the file to its full size on the first write.
+                                let mut sizes_guard = sizes.lock().unwrap();
+                                let filesize = sizes_guard[file_idx];
+                                if filesize > 0 {
+                                    if let Some(parent) = path.parent() {
+                                        dest.create_dir_all(parent).unwrap();
                                     }
-                                    drop(sizes_guard);
-                                    dest.write_at(path, start, &data).unwrap();
-                                } else {
-                                    // Block until it is our turn to append, so writes
-                                    // are contiguous. Data waits on this thread's stack.
-                                    let (cursor_mutex, condvar) = &write_cursors[file_idx];
-                                    let mut cursor = condvar
-                                        .wait_while(
-                                            cursor_mutex.lock().unwrap(),
-                                            |c| *c != start,
-                                        )
-                                        .unwrap();
-                                    assert_eq!(
-                                        *cursor, start,
-                                        "non-contiguous write to {path:?}: expected offset {}, got {start}",
-                                        *cursor,
-                                    );
-                                    dest.append(path, &data).unwrap();
-                                    *cursor += data.len() as u64;
-                                    condvar.notify_all();
+                                    dest.set_length(path, filesize).unwrap();
+                                    sizes_guard[file_idx] = 0;
                                 }
-                                p.inc(size);
-                            });
-                        }
+                                drop(sizes_guard);
+                                dest.write_at(path, start, &data).unwrap();
+                            } else {
+                                // Block until it is our turn to append, so writes
+                                // are contiguous. Data waits on this thread's stack —
+                                // nothing is heap-buffered while blocking.
+                                let (state_mutex, condvar) = &write_state[file_idx];
+                                let mut state = condvar
+                                    .wait_while(state_mutex.lock().unwrap(), |s| s.cursor != start)
+                                    .unwrap();
+                                assert_eq!(
+                                    state.cursor, start,
+                                    "non-contiguous write to {path:?}: expected {}, got {start}",
+                                    state.cursor,
+                                );
+                                let handle = state.handle.get_or_insert_with(|| {
+                                    debug!("Opening write handle to {:?}", path);
+                                    Box::new(dest.get_writer(path).unwrap().open_replace().unwrap())
+                                });
+                                handle.write_all(&data).unwrap();
+                                state.cursor += data.len() as u64;
+                                condvar.notify_all();
+                            }
+                            p.inc(size);
+                        });
                     }
-                });
-            }
+                }
+            });
         }
     });
 
     p.finish();
-
     Ok(())
 }
+
+//
+// #[allow(clippy::too_many_lines)]
+// fn restore_contents<S: Open>(
+//     repo: &Repository<S>,
+//     dest: &impl Destination,
+//     filenames: &Filenames,
+//     file_lengths: Vec<u64>,
+//     restore_info: RestoreInfo,
+//     restore_size: u64,
+// ) -> RusticResult<()> {
+//     let be = repo.dbe();
+//     let num_files = file_lengths.len();
+//
+//     // For random-write: create empty files now, non-empty files are lazily
+//     // allocated on first write via the sizes mutex.
+//     // For append: truncate ALL files to 0 now so appends start from a clean
+//     // slate (no stale content, no pre-allocated zeros that would cause
+//     // over-length output).
+//     for (i, size) in file_lengths.iter().enumerate() {
+//         if *size == 0 || !dest.can_random_write() {
+//             let path = &filenames[i];
+//             if let Some(parent) = path.parent() {
+//                 dest.create_dir_all(parent)?;
+//             }
+//             dest.set_length(path, 0).map_err(|err| {
+//                 RusticError::with_source(
+//                     ErrorKind::InputOutput,
+//                     "Failed to set the length of the file `{path}`. Please check the path and try again.",
+//                     err,
+//                 )
+//                     .attach_context("path", path.display().to_string())
+//             })?;
+//         }
+//     }
+//
+//     // Random-write path: tracks which files still need to be allocated
+//     // (set to their full size) before the first write_at.
+//     let sizes = &Mutex::new(file_lengths);
+//
+//     // Append path: per-file cursor + condvar so that concurrent threads
+//     // always append in offset order. Data waits on the calling thread's
+//     // stack — nothing is heap-buffered while blocking.
+//     let handles: DashMap<usize, Box<dyn Write + Send + Sync + 'static>> = DashMap::new();
+//     let write_cursors: Vec<(Mutex<u64>, Condvar)> = (0..num_files)
+//         .map(|_| (Mutex::new(0u64), Condvar::new()))
+//         .collect();
+//
+//     let handles = &handles;
+//     let write_cursors = &write_cursors;
+//
+//     let p = repo.progress_bytes("restoring file contents...");
+//     p.set_length(restore_size);
+//
+//     let packs: Vec<_> = restore_info
+//         .into_iter()
+//         .map(|((pack_id, bl), fls)| {
+//             let from_file = fls
+//                 .iter()
+//                 .find(|fl| fl.matches)
+//                 .map(|fl| (fl.file_idx, fl.file_start, bl.data_length()));
+//
+//             let name_dests = fls
+//                 .iter()
+//                 .filter(|fl| !fl.matches)
+//                 .map(|fl| (fl.file_idx, fl.file_start))
+//                 .collect();
+//
+//             PackInfo {
+//                 pack_id,
+//                 from_file,
+//                 locations: BlobLocations::from_blob_location(bl, name_dests),
+//             }
+//         })
+//         // optimize reading from backend by reading many blobs in a row
+//         .coalesce(PackInfo::coalesce)
+//         .collect();
+//
+//     let threads = constants::MAX_READER_THREADS_NUM;
+//     let pool = ThreadPoolBuilder::new()
+//         .num_threads(threads)
+//         .build()
+//         .map_err(|err| {
+//             RusticError::with_source(
+//                 ErrorKind::Internal,
+//                 "Failed to create the thread pool with `{num_threads}` threads. Please try again.",
+//                 err,
+//             )
+//                 .attach_context("num_threads", threads.to_string())
+//         })?;
+//
+//     pool.in_place_scope(|s| {
+//         for PackInfo {
+//             pack_id,
+//             from_file,
+//             locations:
+//             BlobLocations {
+//                 offset,
+//                 length,
+//                 blobs,
+//             },
+//         } in packs
+//         {
+//             let p = &p;
+//             if !blobs.is_empty() {
+//                 // TODO: error handling!
+//                 s.spawn(move |s1| {
+//                     let read_data = match (dest.can_random_write(), &from_file) {
+//                         (true, Some((file_idx, offset_file, length_file))) => {
+//                             let length: u64 = (*length_file).into();
+//                             let offset: u64 = *offset_file;
+//                             let path = &filenames[*file_idx];
+//                             let mut vec = vec![0; length as usize];
+//                             let mut file = dest.get_reader(path).and_then(|x| x.open()).unwrap();
+//                             let _ = file.seek(SeekFrom::Start(offset)).unwrap();
+//                             let _ = file.read_exact(&mut vec).unwrap();
+//                             Bytes::from(vec)
+//                         }
+//
+//                         _ => be
+//                             .read_partial(FileType::Pack, &pack_id, false, offset, length)
+//                             .unwrap(),
+//                     };
+//
+//                     // save into needed files in parallel
+//                     for (bl, name_dests) in blobs {
+//                         let size = bl.data_length().into();
+//                         let data = if dest.can_random_write() && from_file.is_some() {
+//                             read_data.clone()
+//                         } else {
+//                             let start = usize::try_from(bl.offset - offset)
+//                                 .expect("convert from u32 to usize should not fail!");
+//                             let end = usize::try_from(bl.offset + bl.length - offset)
+//                                 .expect("convert from u32 to usize should not fail!");
+//                             be.read_encrypted_from_partial(
+//                                 &read_data[start..end],
+//                                 bl.uncompressed_length,
+//                             )
+//                                 .unwrap()
+//                         };
+//                         for (file_idx, start) in name_dests {
+//                             let data = data.clone();
+//                             s1.spawn(move |_| {
+//                                 let path = &filenames[file_idx];
+//                                 if dest.can_random_write() {
+//                                     // Allocate file if it is not yet allocated
+//                                     let mut sizes_guard = sizes.lock().unwrap();
+//                                     let filesize = sizes_guard[file_idx];
+//                                     if filesize > 0 {
+//                                         if let Some(parent) = path.parent() {
+//                                             dest.create_dir_all(parent).unwrap();
+//                                         }
+//                                         dest.set_length(path, filesize).unwrap();
+//                                         sizes_guard[file_idx] = 0;
+//                                     }
+//                                     drop(sizes_guard);
+//                                     dest.write_at(path, start, &data).unwrap();
+//                                 } else {
+//                                     // Block until it is our turn to append, so writes
+//                                     // are contiguous. Data waits on this thread's stack.
+//                                     let (cursor_mutex, condvar) = &write_cursors[file_idx];
+//                                     let mut cursor = condvar
+//                                         .wait_while(
+//                                             cursor_mutex.lock().unwrap(),
+//                                             |c| *c != start,
+//                                         )
+//                                         .unwrap();
+//                                     assert_eq!(
+//                                         *cursor, start,
+//                                         "non-contiguous write to {path:?}: expected offset {}, got {start}",
+//                                         *cursor,
+//                                     );
+//
+//                                     // Attempt to open a file handle to write in one motion.
+//                                     if let Some(mut handle) = handles.get_mut(&file_idx) {
+//                                         let _ = handle.write(&data).unwrap();
+//                                     } else {
+//                                         debug!("Opening write handle to {:?}", &path);
+//                                         let mut handle = dest.get_writer(&path).unwrap().open_replace().unwrap();
+//                                         let _ = handle.write(&data).unwrap();
+//                                         let _ = handles.insert(file_idx, Box::new(handle));
+//                                     }
+//
+//                                     dest.append(path, &data).unwrap();
+//                                     *cursor += data.len() as u64;
+//                                     condvar.notify_all();
+//                                 }
+//                                 p.inc(size);
+//                             });
+//                         }
+//                     }
+//                 });
+//             }
+//         }
+//     });
+//
+//     p.finish();
+//
+//     Ok(())
+// }
 
 /// Information about what will be restored.
 ///
@@ -758,6 +975,12 @@ impl RestorePlan {
             }
         }
 
+        let mut open = if existing_file.is_some() {
+            Some(dest.get_reader(&name)?.open()?)
+        } else {
+            None
+        };
+
         let file_idx = self.names.len();
         self.names.push(name.clone());
         let mut file_pos = 0;
@@ -777,9 +1000,8 @@ impl RestorePlan {
 
             // We can skip reading from `dest` as soon as we know the file is different.
             let should_read = !has_unmatched || dest.can_random_write();
-            if should_read && existing_file.is_some() {
-                let mut data = Cursor::new(dest.read_exact(&name, file_pos, length)?);
-                matches = id.blob_matches_reader(length, &mut data);
+            if should_read && let Some(mut open) = open.as_mut() {
+                matches = id.blob_matches_reader(length, &mut open);
             }
 
             if !matches {

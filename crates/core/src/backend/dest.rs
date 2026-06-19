@@ -1,18 +1,21 @@
 use crate::repofile::{Metadata, Node};
-use crate::{ReadSource, RestoreOptions, RusticResult};
+use crate::{ReadFileOpen, ReadSource, RestoreOptions, RusticResult, WriteFileOpen};
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
+use crate::backend::SeekFileOpen;
 
 pub trait Destination: Send + Sync {
     /// The [`ReadSource`] to list files for this [`Destination`].
-    type Reader: ReadSource;
+    type Iterator: ReadSource;
+    type Reader: SeekFileOpen;
+    type Writer: WriteFileOpen;
     
     /// Attempts to read current files in [`Destination`].
     /// 
     /// # Errors
     /// * If the path could not be read.
     /// 
-    fn read_source(&self) -> RusticResult<Self::Reader>;
+    fn read_source(&self) -> RusticResult<Self::Iterator>;
 
     /// Remove the given directory (relative to the base path)
     ///
@@ -95,21 +98,30 @@ pub trait Destination: Send + Sync {
     /// If it doesn't exist, create a new (empty) one with given length.
     fn set_length(&self, path: &Path, size: u64) -> RusticResult<()>;
 
-    /// Read the given item (relative to the base path)
+    /// Returns the file opener for a specific path.
     ///
     /// # Arguments
     ///
-    /// * `path` - The item to read
-    /// * `offset` - The offset to read from
-    /// * `length` - The length to read
+    /// * `path` - The item to read.
+    ///
+    /// # Errors
+    ///
+    /// * If the file does not exist.
+    /// * If the file could not be opened.
+    /// * If the path is a directory.
+    fn get_reader(&self, path: &Path) -> RusticResult<Self::Reader>;
+
+    /// Returns the file writer for a specific path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The item to write.
     ///
     /// # Errors
     ///
     /// * If the file could not be opened.
-    /// * If the file could not be sought to the given position.
-    /// * If the length of the file could not be converted to u32.
-    /// * If the length of the file could not be read.
-    fn read_exact(&self, path: &Path, offset: u64, length: u64) -> RusticResult<Bytes>;
+    /// * If the path is a directory.
+    fn get_writer(&self, path: &Path) -> RusticResult<Self::Writer>;
 
     /// Check if a matching file exists.
     ///

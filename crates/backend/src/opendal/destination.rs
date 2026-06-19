@@ -1,4 +1,4 @@
-use crate::opendal::source::OpenDALReader;
+use crate::opendal::source::{OpenDALFile, OpenDALReader};
 use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALSource};
 use crate::path_to_str;
 use bytes::Bytes;
@@ -75,9 +75,11 @@ impl OpenDALWriter {
 }
 
 impl Destination for OpenDALWriter {
-    type Reader = OpenDALReader;
+    type Iterator = OpenDALReader;
+    type Reader = OpenDALFile;
+    type Writer = OpenDALFile;
 
-    fn read_source(&self) -> RusticResult<Self::Reader> {
+    fn read_source(&self) -> RusticResult<Self::Iterator> {
         OpenDALSource::new(&self.config, &self.root).get_reader()
     }
 
@@ -145,27 +147,12 @@ impl Destination for OpenDALWriter {
         Ok(())
     }
 
-    fn read_exact(&self, path: &Path, offset: u64, length: u64) -> RusticResult<Bytes> {
-        let path = path_to_str(&self.root, path, false);
-        let mut buf = vec![0; length as usize];
-        self.be
-            .operator
-            .read_options(
-                &path,
-                ReadOptions {
-                    range: BytesRange::from(offset..offset + length),
-                    ..Default::default()
-                },
-            )
-            .map_err(|err| {
-                RusticError::with_source(ErrorKind::Backend, "Failed to read metadata", err)
-            })?
-            .read_exact(&mut buf)
-            .map_err(|err| {
-                RusticError::with_source(ErrorKind::Backend, "Failed to read file", err)
-            })?;
+    fn get_reader(&self, path: &Path) -> RusticResult<Self::Reader> {
+        Ok(OpenDALFile(self.be.clone(), path_to_str(&self.root, path, false)))
+    }
 
-        Ok(Bytes::from(buf))
+    fn get_writer(&self, path: &Path) -> RusticResult<Self::Writer> {
+        Ok(OpenDALFile(self.be.clone(), path_to_str(&self.root, path, false)))
     }
 
     fn get_existing(&self, path: &Path) -> RusticResult<Option<Metadata>> {

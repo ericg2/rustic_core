@@ -10,10 +10,7 @@ use ignore::{Walk, WalkBuilder};
 use log::warn;
 use serde_with::{DisplayFromStr, serde_as};
 
-use rustic_core::{
-    ErrorKind, Excludes, FilterOptions, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder,
-    ReadSourceEntry, RusticError, RusticResult,
-};
+use rustic_core::{ErrorKind, Excludes, FilterOptions, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult, WriteFileOpen};
 
 use crate::local::mapper::LocalSaveOptions;
 use serde::{Deserialize, Serialize};
@@ -206,7 +203,7 @@ impl Iterator for LocalIterator {
 
 #[derive(Debug)]
 /// Describes an open file from the local backend.
-pub struct LocalFile(pub PathBuf);
+pub struct LocalFile(pub(crate) PathBuf);
 
 impl ReadFileOpen for LocalFile {
     type Reader = File;
@@ -221,6 +218,27 @@ impl ReadFileOpen for LocalFile {
             )
             .attach_context("path", path.display().to_string())
         })
+    }
+}
+
+impl WriteFileOpen for LocalFile {
+    type Writer = File;
+
+    fn open_replace(self) -> RusticResult<Self::Writer> {
+        let path = self.0;
+        File::options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&path)
+            .map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::InputOutput,
+                    "Failed to open file for writing at `{path}`.",
+                    err,
+                )
+                    .attach_context("path", path.display().to_string())
+            })
     }
 }
 

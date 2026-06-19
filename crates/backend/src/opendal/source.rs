@@ -2,14 +2,11 @@ use crate::filter::ExcludeFilter;
 use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALDestination};
 
 use log::warn;
-use opendal::blocking::StdReader;
+use opendal::blocking::{StdReader, StdWriter};
 use opendal::options::ListOptions;
 use opendal::{Builder, Configurator, Entry, IntoOperatorUri};
 
-use rustic_core::{
-    ErrorKind, Excludes, Node, NodeType, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder,
-    ReadSourceEntry, RusticError, RusticResult,
-};
+use rustic_core::{ErrorKind, Excludes, Node, NodeType, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult, WriteFileOpen};
 
 use crate::local::LocalSource;
 use derive_setters::Setters;
@@ -70,7 +67,7 @@ impl ReadSourceBuilder for OpenDALSource {
 
 /// Describes an open file from the OpenDAL backend.
 #[derive(Debug, Clone)]
-pub struct OpenDALFile(Arc<OpenDALBackend>, String);
+pub struct OpenDALFile(pub(crate) Arc<OpenDALBackend>, pub(crate) String);
 
 impl ReadFileOpen for OpenDALFile {
     type Reader = StdReader;
@@ -89,6 +86,29 @@ impl ReadFileOpen for OpenDALFile {
                     err,
                 )
                 .attach_context("path", path.clone())
+            })?;
+
+        Ok(reader)
+    }
+}
+
+impl WriteFileOpen for OpenDALFile {
+    type Writer = StdWriter;
+
+    fn open_replace(self) -> RusticResult<Self::Writer> {
+        let path = self.1;
+        let reader = self
+            .0
+            .operator
+            .writer(&path)
+            .and_then(|r| Ok(r.into_std_write()))
+            .map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::InputOutput,
+                    "Failed to open file at `{path}`. Please ensure it exists and is accessible.",
+                    err,
+                )
+                    .attach_context("path", path.clone())
             })?;
 
         Ok(reader)

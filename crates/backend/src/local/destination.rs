@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::local::LocalSource;
-use crate::local::source::LocalReader;
+use crate::local::source::{LocalFile, LocalReader};
 use crate::local::mapper::LocalSaveOptions;
 #[cfg(not(windows))]
 use crate::local::mapper::nix_mapper::map_mode_from_go;
@@ -616,9 +616,11 @@ impl LocalWriter {
 }
 
 impl Destination for LocalWriter {
-    type Reader = LocalReader;
+    type Iterator = LocalReader;
+    type Reader = LocalFile;
+    type Writer = LocalFile;
 
-    fn read_source(&self) -> RusticResult<Self::Reader> {
+    fn read_source(&self) -> RusticResult<Self::Iterator> {
         LocalSource::new(&self.path).get_reader()
     }
 
@@ -695,16 +697,12 @@ impl Destination for LocalWriter {
         })
     }
 
-    fn read_exact(&self, path: &Path, offset: u64, length: u64) -> RusticResult<Bytes> {
-        let filename = self.path(path);
-        let ret = (|| -> io::Result<Bytes> {
-            let mut vec = vec![0; length as usize];
-            let mut file = File::open(filename)?;
-            let _ = file.seek(SeekFrom::Start(offset))?;
-            file.read_exact(&mut vec)?;
-            Ok(Bytes::from(vec))
-        })();
-        ret.map_err(|err| RusticError::with_source(ErrorKind::Backend, "Failed to read file", err))
+    fn get_reader(&self, path: &Path) -> RusticResult<Self::Reader> {
+        Ok(LocalFile(self.path(path)))
+    }
+
+    fn get_writer(&self, path: &Path) -> RusticResult<Self::Writer> {
+        Ok(LocalFile(self.path(path)))
     }
 
     fn get_existing(&self, path: &Path) -> RusticResult<Option<Metadata>> {
