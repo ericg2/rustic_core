@@ -131,7 +131,7 @@ pub use crate::{
     backend::{
         ALL_FILE_TYPES, DestinationBuilder, FileType, ReadBackend, ReadFileOpen, ReadSource,
         ReadSourceBuilder, ReadSourceEntry, RepositoryBackends, RepositoryConfig, SeekFileOpen,
-        WriteBackend, WriteFileOpen,
+        WriteBackend, WriteFileOpen, WriteHandle,
         decrypt::{compression_level_range, max_compression_level},
         dest::Destination,
         filters::FilterOptions,

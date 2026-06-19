@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::{Seek, Write};
 use std::{io::Read, ops::Deref, path::PathBuf, sync::Arc};
+use std::fs::File;
 
 /// [`BackendErrorKind`] describes the errors that can be returned by the various Backends
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
@@ -463,9 +464,13 @@ pub trait ReadFileOpen {
 
 pub trait SeekFileOpen: ReadFileOpen<Reader: Seek> {}
 
+pub trait WriteHandle: Write + Send + Sync + 'static {
+    fn close(mut self) -> RusticResult<()>;
+}
+
 pub trait WriteFileOpen {
     /// The Writer used for this source.
-    type Writer: Write + Send + Sync + 'static;
+    type Writer: WriteHandle;
 
     /// Opens the source. A file will be created if not exist.
     ///
@@ -477,6 +482,12 @@ pub trait WriteFileOpen {
     ///
     /// The reader used to read from the source.
     fn open_replace(self) -> RusticResult<Self::Writer>;
+}
+
+impl WriteHandle for File {
+    fn close(self) -> RusticResult<()> {
+        Ok(())
+    }
 }
 
 /// Trait for backends that can be restored to.

@@ -6,7 +6,10 @@ use opendal::blocking::{StdReader, StdWriter};
 use opendal::options::ListOptions;
 use opendal::{Builder, Configurator, Entry, IntoOperatorUri};
 
-use rustic_core::{ErrorKind, Excludes, Node, NodeType, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult, WriteFileOpen};
+use rustic_core::{
+    ErrorKind, Excludes, Node, NodeType, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder,
+    ReadSourceEntry, RusticError, RusticResult, WriteFileOpen, WriteHandle,
+};
 
 use crate::local::LocalSource;
 use derive_setters::Setters;
@@ -57,11 +60,7 @@ impl ReadSourceBuilder for OpenDALSource {
         ))?;
 
         let be = OpenDALBackend::new(&config)?;
-        let ret = OpenDALReader::new(
-            Arc::new(be),
-            self.paths.clone(),
-            self.excludes.clone(),
-        )?;
+        let ret = OpenDALReader::new(Arc::new(be), self.paths.clone(), self.excludes.clone())?;
         Ok(ret)
     }
 }
@@ -93,12 +92,39 @@ impl ReadFileOpen for OpenDALFile {
     }
 }
 
+pub struct OpenDALHandle(StdWriter);
+
+impl WriteHandle for OpenDALHandle {
+    fn close(mut self) -> RusticResult<()> {
+        self.0
+            .flush()
+            .and_then(|_| self.0.close())
+            .map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::InputOutput,
+                    "Failed to close OpenDAL file",
+                    err,
+                )
+            })
+    }
+}
+
+impl Write for OpenDALHandle {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
 impl WriteFileOpen for OpenDALFile {
-    type Writer = StdWriter;
+    type Writer = OpenDALHandle;
 
     fn open_replace(self) -> RusticResult<Self::Writer> {
         let path = self.1;
-        let reader = self
+        let writer = self
             .0
             .operator
             .writer(&path)
@@ -109,10 +135,10 @@ impl WriteFileOpen for OpenDALFile {
                     "Failed to open file at `{path}`. Please ensure it exists and is accessible.",
                     err,
                 )
-                    .attach_context("path", path.clone())
+                .attach_context("path", path.clone())
             })?;
 
-        Ok(reader)
+        Ok(OpenDALHandle(writer))
     }
 }
 
