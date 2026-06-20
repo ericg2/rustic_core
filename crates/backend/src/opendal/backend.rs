@@ -2,16 +2,18 @@ use bytes::Bytes;
 use bytesize::ByteSize;
 use derive_setters::Setters;
 use log::{error, trace, warn};
+use opendal::layers::{DefaultLoggingInterceptor, LoggingInterceptor};
+use opendal::raw::{AccessorInfo, Operation};
 use opendal::{
-    blocking::{Operator, StdReader}, layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer}, options::{ListOptions, ReadOptions}, Builder, Configurator,
-    Entry,
-    IntoOperatorUri,
-    OperatorBuilder,
+    Builder, Configurator, Entry, Error, IntoOperatorUri, OperatorBuilder,
+    blocking::{Operator, StdReader},
+    layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer},
+    options::{ListOptions, ReadOptions},
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use serde_with::{serde_as, DisplayFromStr};
+use serde_with::{DisplayFromStr, serde_as};
 use std::collections::HashMap;
 use std::path::Path;
 use std::{
@@ -26,14 +28,15 @@ use typed_path::UnixPathBuf;
 
 use crate::normalize_value;
 use crate::opendal::config::*;
+use crate::opendal::log::OpenLogLayer;
 use crate::opendal::source::OpenDALReader;
 use crate::opendal::{OpenDALDestination, OpenDALSource, Throttle};
 use crate::retry::RetrySetting;
 use rustic_core::{
-    repofile::{Node, NodeType}, ErrorKind, Excludes, FileType, Id, Metadata, PathList, ReadBackend,
+    ALL_FILE_TYPES, ErrorKind, Excludes, FileType, Id, Metadata, PathList, ReadBackend,
     ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry, RepositoryConfig, RusticError,
     RusticResult, WriteBackend,
-    ALL_FILE_TYPES,
+    repofile::{Node, NodeType},
 };
 
 mod constants {
@@ -53,7 +56,6 @@ fn runtime() -> &'static Runtime {
             .unwrap()
     })
 }
-
 
 /// `OpenDALPath` contains a wrapper around a blocking operator of the `OpenDAL` library.
 #[derive(Clone, Debug)]
@@ -75,6 +77,7 @@ impl OpenDALBackend {
         // TODO: add the extra retry options using ExponentialBackoff.
         let retry = config.retry.get_setting(constants::DEFAULT_RETRY as usize);
         operator = operator.layer(RetryLayer::new().with_max_times(retry).with_jitter());
+        operator = operator.layer(LoggingLayer::new(OpenLogLayer));
 
         if let Some(x) = config.connections {
             operator = operator.layer(ConcurrentLimitLayer::new(x as usize));

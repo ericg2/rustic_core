@@ -2,7 +2,7 @@ use crate::filter::ExcludeFilter;
 use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALDestination};
 
 use log::warn;
-use opendal::blocking::{StdReader, StdWriter};
+use opendal::blocking::{Operator, StdReader, StdWriter};
 use opendal::options::{ListOptions, WriteOptions};
 use opendal::{Builder, Configurator, Entry, IntoOperatorUri};
 
@@ -28,8 +28,8 @@ use std::sync::Arc;
 /// OpenDAL-backed source definition
 pub struct OpenDALSource {
     pub paths: Vec<PathBuf>,
-    pub config: Option<OpenDALConfig>,
     pub excludes: Option<Excludes>,
+    pub config: Option<OpenDALConfig>,
 }
 
 impl OpenDALSource {
@@ -62,94 +62,6 @@ impl ReadSourceBuilder for OpenDALSource {
         let be = OpenDALBackend::new(&config)?;
         let ret = OpenDALReader::new(Arc::new(be), self.paths.clone(), self.excludes.clone())?;
         Ok(ret)
-    }
-}
-
-/// Describes an open file from the OpenDAL backend.
-#[derive(Debug, Clone)]
-pub struct OpenDALFile(pub(crate) Arc<OpenDALBackend>, pub(crate) String);
-
-impl ReadFileOpen for OpenDALFile {
-    type Reader = StdReader;
-
-    fn open(self) -> RusticResult<Self::Reader> {
-        let path = self.1;
-        let reader = self
-            .0
-            .operator
-            .reader(&path)
-            .and_then(|r| r.into_std_read(..))
-            .map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::InputOutput,
-                    "Failed to open file at `{path}`. Please ensure it exists and is accessible.",
-                    err,
-                )
-                .attach_context("path", path.clone())
-            })?;
-
-        Ok(reader)
-    }
-}
-
-pub struct OpenDALHandle(StdWriter);
-
-impl WriteHandle for OpenDALHandle {
-    fn close(&mut self) -> RusticResult<()> {
-        self.0.flush().and_then(|_| self.0.close()).map_err(|err| {
-            RusticError::with_source(ErrorKind::InputOutput, "Failed to close OpenDAL file", err)
-        })
-    }
-}
-
-impl Write for OpenDALHandle {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.0.write(buf)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.0.flush()
-    }
-}
-
-impl WriteFileOpen for OpenDALFile {
-    type Writer = OpenDALHandle;
-
-    fn open_replace(self) -> RusticResult<Self::Writer> {
-        let path = self.1;
-        let writer = self
-            .0
-            .operator
-            .writer_options(
-                &path,
-                WriteOptions {
-                    append: false,
-                    ..Default::default()
-                },
-            )
-            .and_then(|r| Ok(r.into_std_write()))
-            .map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::InputOutput,
-                    "Failed to open file at `{path}`. Please ensure it exists and is accessible.",
-                    err,
-                )
-                .attach_context("path", path.clone())
-            })?;
-
-        Ok(OpenDALHandle(writer))
-    }
-}
-
-pub struct OpenDALIterator {
-    entries: std::vec::IntoIter<ReadSourceEntry<OpenDALFile>>,
-}
-
-impl Iterator for OpenDALIterator {
-    type Item = RusticResult<ReadSourceEntry<OpenDALFile>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.entries.next().map(Ok)
     }
 }
 
@@ -264,5 +176,93 @@ impl OpenDALReader {
             node: Node::new_node(OsStr::new(e.name()), node_type, meta),
             open: Some(OpenDALFile(be, path)),
         }
+    }
+}
+
+/// Describes an open file from the OpenDAL backend.
+#[derive(Debug, Clone)]
+pub struct OpenDALFile(pub(crate) Arc<OpenDALBackend>, pub(crate) String);
+
+impl ReadFileOpen for OpenDALFile {
+    type Reader = StdReader;
+
+    fn open(self) -> RusticResult<Self::Reader> {
+        let path = self.1;
+        let reader = self
+            .0
+            .operator
+            .reader(&path)
+            .and_then(|r| r.into_std_read(..))
+            .map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::InputOutput,
+                    "Failed to open file at `{path}`. Please ensure it exists and is accessible.",
+                    err,
+                )
+                .attach_context("path", path.clone())
+            })?;
+
+        Ok(reader)
+    }
+}
+
+pub struct OpenDALHandle(StdWriter);
+
+impl WriteHandle for OpenDALHandle {
+    fn close(&mut self) -> RusticResult<()> {
+        self.0.flush().and_then(|_| self.0.close()).map_err(|err| {
+            RusticError::with_source(ErrorKind::InputOutput, "Failed to close OpenDAL file", err)
+        })
+    }
+}
+
+impl Write for OpenDALHandle {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl WriteFileOpen for OpenDALFile {
+    type Writer = OpenDALHandle;
+
+    fn open_replace(self) -> RusticResult<Self::Writer> {
+        let path = self.1;
+        let writer = self
+            .0
+            .operator
+            .writer_options(
+                &path,
+                WriteOptions {
+                    append: false,
+                    ..Default::default()
+                },
+            )
+            .and_then(|r| Ok(r.into_std_write()))
+            .map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::InputOutput,
+                    "Failed to open file at `{path}`. Please ensure it exists and is accessible.",
+                    err,
+                )
+                .attach_context("path", path.clone())
+            })?;
+
+        Ok(OpenDALHandle(writer))
+    }
+}
+
+pub struct OpenDALIterator {
+    entries: std::vec::IntoIter<ReadSourceEntry<OpenDALFile>>,
+}
+
+impl Iterator for OpenDALIterator {
+    type Item = RusticResult<ReadSourceEntry<OpenDALFile>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.entries.next().map(Ok)
     }
 }

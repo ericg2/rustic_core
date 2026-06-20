@@ -4,8 +4,8 @@ mod source;
 mod throttle;
 mod util;
 mod tests;
-
 mod config;
+mod log;
 
 pub use config::{OpenDALConfig, Scheme};
 pub use destination::OpenDALDestination;
