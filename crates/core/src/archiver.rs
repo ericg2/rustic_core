@@ -158,7 +158,7 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
                 }
                 Ok(ReadSourceEntry { path, node, open }) => {
                     let snapshot_path = if let Some(as_path) = as_path {
-                        as_path.clone().join(path)
+                        crate::join_force(&as_path, &path)
                     } else {
                         path
                     };

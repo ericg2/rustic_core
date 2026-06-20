@@ -124,6 +124,7 @@ pub(crate) mod repository;
 /// Virtual File System support - allows to act on the repository like on a file system
 pub mod vfs;
 
+use std::path::{Component, Path, PathBuf};
 // re-export jiff
 pub use jiff;
 // rustic_core Public API
@@ -179,3 +180,15 @@ pub use crate::{
         credentials::{CredentialOptions, Credentials},
     },
 };
+
+pub(crate) fn join_force(base: impl AsRef<Path>, p: impl AsRef<Path>) -> PathBuf {
+    let mut out = PathBuf::from(base.as_ref());
+    for comp in p.as_ref().components() {
+        match comp {
+            Component::Prefix(_) => {} // skip drive letters / UNC prefix
+            Component::RootDir => {}   // skip leading /
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
