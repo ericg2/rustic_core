@@ -170,7 +170,7 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
                         (
                             snapshot_path
                                 .parent()
-                                .expect("file path should have a parent!")
+                                .unwrap_or(&Path::new(""))
                                 .to_path_buf(),
                             node,
                             open,
