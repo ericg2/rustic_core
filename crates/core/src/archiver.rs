@@ -158,9 +158,7 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
                 }
                 Ok(ReadSourceEntry { path, node, open }) => {
                     let snapshot_path = if let Some(as_path) = as_path {
-                        as_path
-                            .clone()
-                            .join(path.strip_prefix(backup_path).unwrap_or(&Path::new("")))
+                        as_path.clone().join(path)
                     } else {
                         path
                     };
