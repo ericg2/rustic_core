@@ -1,17 +1,14 @@
 use crate::opendal::source::{OpenDALFile, OpenDALReader};
 use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALSource};
 use crate::path_to_str;
-use bytes::Bytes;
 use derive_setters::Setters;
-use opendal::options::{DeleteOptions, ReadOptions, WriteOptions};
-use opendal::raw::BytesRange;
+use opendal::options::{DeleteOptions, WriteOptions};
 use rustic_core::{
     Destination, DestinationBuilder, ErrorKind, Metadata, Node, ReadSourceBuilder, RestoreOptions,
     RusticError, RusticResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -22,7 +19,10 @@ use std::sync::Arc;
 #[setters(into)]
 #[non_exhaustive]
 pub struct OpenDALDestination {
-    pub root: Option<PathBuf>,
+    /// The path to use for destination.
+    pub path: Option<PathBuf>,
+
+    /// The [`OpenDALConfig`] to use.
     pub config: Option<OpenDALConfig>,
 }
 
@@ -31,11 +31,11 @@ impl OpenDALDestination {
     ///
     /// # Arguments
     ///
-    /// * `root` - The base path of the destination
+    /// * `path` - The base path of the destination
     /// * `config` - The [`OpenDALRepo`] to use.
-    pub fn new(root: impl AsRef<Path>, config: &OpenDALConfig) -> Self {
+    pub fn new(path: impl AsRef<Path>, config: &OpenDALConfig) -> Self {
         Self {
-            root: Some(root.as_ref().to_path_buf()),
+            path: Some(path.as_ref().to_path_buf()),
             config: Some(config.to_owned()),
         }
     }
@@ -46,7 +46,7 @@ impl DestinationBuilder for OpenDALDestination {
 
     fn get_destination(&self) -> RusticResult<Self::Output> {
         // Make sure the fields are valid and filled in.
-        let root = self.root.as_ref().ok_or(RusticError::new(
+        let root = self.path.as_ref().ok_or(RusticError::new(
             ErrorKind::Configuration,
             "Root is required for source.",
         ))?;
@@ -132,7 +132,7 @@ impl Destination for OpenDALWriter {
         let path = path_to_str(&self.root, path, false);
 
         if size == 0 {
-            self.be
+            let _ = self.be
                 .operator
                 .write(&path, Vec::<u8>::new())
                 .map_err(|err| {
@@ -142,9 +142,7 @@ impl Destination for OpenDALWriter {
         }
 
         // OpenDAL doesn't provide a generic truncate API.
-        // Create a placeholder object of the requested size.
-        // self.be.operator.write(&path, vec![0u8; size as usize])?;
-        Ok(())
+        Err(RusticError::new(ErrorKind::Unsupported, "Cannot set OpenDAL length > 0"))
     }
 
     fn get_reader(&self, path: &Path) -> RusticResult<Self::Reader> {

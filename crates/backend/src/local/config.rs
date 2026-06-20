@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use rustic_core::{ErrorKind, RepositoryConfig, RusticError, RusticResult, WriteBackend};
 use crate::local::backend::LocalBackend;
-use crate::opendal::OpenDALConfig;
 
 #[serde_as]
 #[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]

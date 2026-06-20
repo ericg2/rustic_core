@@ -2,19 +2,17 @@
 use std::os::unix::fs::{PermissionsExt, symlink};
 
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io,
-    io::{Read, Seek, SeekFrom, Write},
+    io::{Seek, SeekFrom, Write},
     num::TryFromIntError,
     path::{Path, PathBuf},
 };
 
 use crate::local::LocalSource;
 use crate::local::source::{LocalFile, LocalReader};
-use crate::local::mapper::LocalSaveOptions;
 #[cfg(not(windows))]
 use crate::local::mapper::nix_mapper::map_mode_from_go;
-use bytes::Bytes;
 use derive_setters::Setters;
 use filetime::{FileTime, set_symlink_file_times};
 use jiff::Timestamp;
@@ -30,8 +28,7 @@ use nix::{
 };
 use rustic_core::repofile::{Metadata, Node};
 use rustic_core::{
-    Destination, DestinationBuilder, ErrorKind, Excludes, ExtendedAttribute, FilterOptions,
-    NodeType, ReadSourceBuilder, RestoreOptions, RusticError, RusticResult,
+    Destination, DestinationBuilder, ErrorKind, ExtendedAttribute, ReadSourceBuilder, RestoreOptions, RusticError, RusticResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -67,7 +64,7 @@ mod helpers {
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 pub enum LocalDestinationErrorKind {
     /// directory creation failed: `{0:?}`
-    DirectoryCreationFailed(std::io::Error),
+    DirectoryCreationFailed(io::Error),
 
     #[cfg(any(
         target_os = "macos",
@@ -111,21 +108,21 @@ pub enum LocalDestinationErrorKind {
         source: std::io::Error,
     },
     /// removing directories failed: `{0:?}`
-    DirectoryRemovalFailed(std::io::Error),
+    DirectoryRemovalFailed(io::Error),
     /// removing file failed: `{0:?}`
-    FileRemovalFailed(std::io::Error),
+    FileRemovalFailed(io::Error),
     /// setting time metadata failed: `{0:?}`
-    SettingTimeMetadataFailed(std::io::Error),
+    SettingTimeMetadataFailed(io::Error),
     /// opening file failed: `{0:?}`
-    OpeningFileFailed(std::io::Error),
+    OpeningFileFailed(io::Error),
     /// setting file length failed: `{0:?}`
-    SettingFileLengthFailed(std::io::Error),
+    SettingFileLengthFailed(io::Error),
     /// can't jump to position in file: `{0:?}`
-    CouldNotSeekToPositionInFile(std::io::Error),
+    CouldNotSeekToPositionInFile(io::Error),
     /// couldn't write to buffer: `{0:?}`
-    CouldNotWriteToBuffer(std::io::Error),
+    CouldNotWriteToBuffer(io::Error),
     /// reading exact length of file contents failed: `{0:?}`
-    ReadingExactLengthOfFileFailed(std::io::Error),
+    ReadingExactLengthOfFileFailed(io::Error),
     /// setting file permissions failed: `{0:?}`
     #[cfg(not(windows))]
     SettingFilePermissionsFailed(std::io::Error),
@@ -140,7 +137,7 @@ pub enum LocalDestinationErrorKind {
     HardLinkingFailed {
         source_path: PathBuf,
         filename: PathBuf,
-        source: std::io::Error,
+        source: io::Error,
     },
 }
 

@@ -15,7 +15,6 @@ use crate::rclone::RcloneConfig;
 use crate::rest::RestConfig;
 #[cfg(feature = "clap")]
 use clap::ValueHint;
-use serde::de::DeserializeOwned;
 
 /// Options for a backend.
 #[cfg_attr(feature = "clap", derive(clap::Parser))]

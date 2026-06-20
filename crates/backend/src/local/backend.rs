@@ -1,11 +1,6 @@
 use aho_corasick::AhoCorasick;
 use bytes::Bytes;
-use derive_setters::Setters;
 use log::{debug, error, trace, warn};
-use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::{
     fmt::Debug,
     fs::{self, File, Metadata},
@@ -16,7 +11,7 @@ use std::{
 use walkdir::WalkDir;
 
 use rustic_core::{
-    ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, ReadBackend, RepositoryConfig,
+    ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, ReadBackend,
     RusticError, RusticResult, WriteBackend,
 };
 use crate::local::config::LocalConfig;

@@ -77,7 +77,6 @@ mod filter;
 mod retry;
 mod util;
 
-use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};

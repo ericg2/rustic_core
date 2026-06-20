@@ -1,27 +1,20 @@
-use std::collections::HashMap;
 use std::io::Read;
-use std::path::Path;
-use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use crate::rest::config::RestConfig;
-use crate::retry::RetrySetting;
-use backon::{BlockingRetryable, ExponentialBackoff, ExponentialBuilder};
+use backon::{BlockingRetryable, ExponentialBuilder};
 use bytes::Bytes;
-use derive_setters::Setters;
 use jiff::SignedDuration;
 use log::{trace, warn};
 use reqwest::{
-    Certificate, Identity, IntoUrl, Url,
+    Certificate, Identity, Url,
     blocking::{Client, ClientBuilder},
-    header::{HeaderMap, HeaderValue},
+    header::HeaderMap,
 };
 use rustic_core::{
-    ErrorKind, FileType, Id, ReadBackend, RepositoryConfig, RusticError, RusticResult, WriteBackend,
+    ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult, WriteBackend,
 };
-use serde::{Deserialize, Serialize};
-use serde_with::{DisplayFromStr, serde_as};
+use serde::Deserialize;
 
 /// joining URL failed on: `{0}`
 #[derive(thiserror::Error, Clone, Copy, Debug, displaydoc::Display)]

@@ -1,28 +1,21 @@
 use crate::rest::{RestBackend, RestConfig};
 use bytes::Bytes;
 use constants::DEFAULT_COMMAND;
-use derive_setters::Setters;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use rand::{
     distr::{Alphanumeric, SampleString},
     rng,
 };
 use semver::{BuildMetadata, Prerelease, Version, VersionReq};
-use serde::{Deserialize, Serialize};
-use serde_with::{DisplayFromStr, serde_as};
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::{
-    collections::BTreeMap,
     io::{BufRead, BufReader},
     process::{Child, Command, Stdio},
     thread::JoinHandle,
 };
 use url::Url;
 
-use crate::local::LocalConfig;
 use rustic_core::{
-    CommandInput, ErrorKind, FileType, Id, ReadBackend, RepositoryConfig, RusticError,
+    CommandInput, ErrorKind, FileType, Id, ReadBackend, RusticError,
     RusticResult, WriteBackend,
 };
 use crate::rclone::RcloneConfig;

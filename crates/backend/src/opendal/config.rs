@@ -1,11 +1,10 @@
 use crate::retry::RetrySetting;
 use derive_setters::Setters;
 use opendal::Builder;
-use rustic_core::{PathList, RepositoryConfig, RusticResult, WriteBackend};
+use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use std::collections::HashMap;
-use std::path::Path;
 use std::sync::Arc;
 use crate::opendal::{OpenDALBackend, Throttle};
 use crate::opendal_add;
@@ -74,7 +73,7 @@ impl OpenDALConfig {
 
         let throttle = map
             .remove("throttle")
-            .and_then(|v| v.parse::<crate::opendal::throttle::Throttle>().ok());
+            .and_then(|v| v.parse::<Throttle>().ok());
 
         let retry = map
             .remove("retry")
@@ -119,7 +118,7 @@ impl RepositoryConfig for OpenDALConfig {
 
     fn get_options(&self) -> HashMap<String, String> {
         let mut ret = crate::struct_to_map(&self);
-        ret.remove("scheme");
+        let _ = ret.remove("scheme");
         ret.into_iter().collect()
     }
 

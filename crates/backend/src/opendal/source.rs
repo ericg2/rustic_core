@@ -1,23 +1,23 @@
 use crate::filter::ExcludeFilter;
-use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALDestination};
+use crate::opendal::{OpenDALBackend, OpenDALConfig};
 
 use log::warn;
-use opendal::blocking::{Operator, StdReader, StdWriter};
+use opendal::blocking::{StdReader, StdWriter};
 use opendal::options::{ListOptions, WriteOptions};
-use opendal::{Builder, Configurator, Entry, IntoOperatorUri};
+use opendal::Entry;
 
 use rustic_core::{
     ErrorKind, Excludes, Node, NodeType, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder,
     ReadSourceEntry, RusticError, RusticResult, WriteFileOpen, WriteHandle,
 };
 
-use crate::local::LocalSource;
 use derive_setters::Setters;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::ffi::OsStr;
+use std::fmt::{Debug, Formatter};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 #[serde_as]
@@ -27,8 +27,13 @@ use std::sync::Arc;
 #[non_exhaustive]
 /// OpenDAL-backed source definition
 pub struct OpenDALSource {
+    /// The paths to read from.
     pub paths: Vec<PathBuf>,
+
+    /// The [`Excludes`] to use.
     pub excludes: Option<Excludes>,
+
+    /// The [`OpenDALConfig`] to use.
     pub config: Option<OpenDALConfig>,
 }
 
@@ -206,6 +211,7 @@ impl ReadFileOpen for OpenDALFile {
     }
 }
 
+#[allow(missing_debug_implementations)]
 pub struct OpenDALHandle(StdWriter);
 
 impl WriteHandle for OpenDALHandle {
@@ -255,6 +261,7 @@ impl WriteFileOpen for OpenDALFile {
     }
 }
 
+#[derive(Debug)]
 pub struct OpenDALIterator {
     entries: std::vec::IntoIter<ReadSourceEntry<OpenDALFile>>,
 }

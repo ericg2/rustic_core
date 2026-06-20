@@ -1,5 +1,5 @@
 use crate::SupportedBackend;
-use rustic_core::{ErrorKind, RusticError, RusticResult, WriteBackend};
+use rustic_core::{ErrorKind, RusticError, RusticResult};
 
 /// A backend location. This is a string that represents the location of the backend.
 #[derive(PartialEq, Eq, Debug, Clone)]

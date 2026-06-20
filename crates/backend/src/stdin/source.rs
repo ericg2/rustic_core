@@ -13,7 +13,7 @@ use rustic_core::{ErrorKind, ReadSource, ReadSourceBuilder, ReadSourceEntry, Rus
 #[non_exhaustive]
 /// A source to read from console input.
 pub struct StdinSource {
-    #[setters(skip)]
+    /// The output [`Path`] to save to.
     pub output: Option<PathBuf>
 }
 

@@ -1,10 +1,7 @@
-use crate::rclone::RcloneConfig;
 use crate::rest::RestBackend;
 use crate::retry::RetrySetting;
-use backon::ExponentialBackoff;
 use derive_setters::Setters;
 use jiff::SignedDuration;
-use reqwest::{Certificate, Identity};
 use rustic_core::{ErrorKind, RepositoryConfig, RusticError, RusticResult, WriteBackend};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
@@ -12,7 +9,6 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
-use url::Url;
 
 fn read_file_contents(log_name: &'static str, path: impl AsRef<Path>) -> RusticResult<String> {
     let mut buf = String::new();
@@ -92,6 +88,7 @@ pub struct RestConfig {
 }
 
 impl RestConfig {
+    /// Creates a new [`RestConfig`] with the given URI.
     pub fn new(url: impl AsRef<str>) -> Self {
         Self {
             url: Some(url.as_ref().to_string()),
@@ -106,8 +103,7 @@ impl RestConfig {
             tls_client_cert: None,
         }
     }
-
-    //noinspection DuplicatedCode
+    
     /// Creates a [`RestConfig`] from an iterator.
     ///
     /// # Important

@@ -18,7 +18,10 @@ use std::{path::PathBuf, process::Command};
 #[setters(into)]
 #[non_exhaustive]
 pub struct CommandSource {
+    /// The output [`Path`] to save to.
     pub output: Option<PathBuf>,
+
+    /// The [`CommandInput`] to use.
     pub command: Option<CommandInput>,
 }
 

@@ -14,7 +14,9 @@ use rustic_core::{ErrorKind, RusticError, RusticResult};
 #[setters(into)]
 #[non_exhaustive]
 pub struct Throttle {
+    /// The maximum bandwidth to use, in bits per second.
     pub(crate) bandwidth: u32,
+    /// The maximum "burst" to use, in bits per second.
     pub(crate) burst: u32,
 }
 

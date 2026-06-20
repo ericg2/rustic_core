@@ -1,42 +1,24 @@
 use bytes::Bytes;
-use bytesize::ByteSize;
-use derive_setters::Setters;
-use log::{error, trace, warn};
-use opendal::layers::{DefaultLoggingInterceptor, LoggingInterceptor};
-use opendal::raw::{AccessorInfo, Operation};
+use log::{error, trace};
 use opendal::{
-    Builder, Configurator, Entry, Error, IntoOperatorUri, OperatorBuilder,
-    blocking::{Operator, StdReader},
+    Builder,
+    blocking::Operator,
     layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer},
-    options::{ListOptions, ReadOptions},
+    options::ReadOptions,
 };
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
-use serde_with::{DisplayFromStr, serde_as};
-use std::collections::HashMap;
 use std::path::Path;
-use std::{
-    collections::BTreeMap,
-    ffi::OsStr,
-    str::FromStr,
-    sync::{Arc, OnceLock},
-    vec::IntoIter,
-};
+use std::sync::OnceLock;
 use tokio::runtime::Runtime;
 use typed_path::UnixPathBuf;
 
-use crate::normalize_value;
 use crate::opendal::config::*;
 use crate::opendal::log::OpenLogLayer;
 use crate::opendal::source::OpenDALReader;
-use crate::opendal::{OpenDALDestination, OpenDALSource, Throttle};
-use crate::retry::RetrySetting;
+use crate::opendal::OpenDALSource;
 use rustic_core::{
-    ALL_FILE_TYPES, ErrorKind, Excludes, FileType, Id, Metadata, PathList, ReadBackend,
-    ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry, RepositoryConfig, RusticError,
+    ALL_FILE_TYPES, ErrorKind, FileType, Id, ReadBackend, ReadSource, ReadSourceBuilder, RusticError,
     RusticResult, WriteBackend,
-    repofile::{Node, NodeType},
 };
 
 mod constants {

@@ -1,11 +1,9 @@
 use std::collections::HashMap;
-use std::io::Read;
-use std::path::Path;
 use std::sync::Arc;
 use derive_setters::Setters;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
-use rustic_core::{ErrorKind, RepositoryConfig, RusticError, RusticResult, WriteBackend};
+use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};
 use crate::rclone::backend::RcloneBackend;
 
 #[serde_as]
@@ -15,11 +13,17 @@ use crate::rclone::backend::RcloneBackend;
 #[non_exhaustive]
 /// A repository using Rclone.
 pub struct RcloneConfig {
+    /// The URL to use.
     pub url: Option<String>,
+
+    /// If a password should be used.
     pub use_password: Option<bool>,
+
+    /// The custom rclone command to use.
     pub rclone_command: Option<String>,
 
     #[serde_as(as = "Option<DisplayFromStr>")]
+    /// The REST URL to use (optional).
     pub rest_url: Option<String>,
 }
 
@@ -76,7 +80,7 @@ impl RepositoryConfig for RcloneConfig {
 
     fn get_options(&self) -> HashMap<String, String> {
         let mut ret = crate::struct_to_map(&self);
-        ret.remove("url");
+        let _ = ret.remove("url");
         ret
     }
 

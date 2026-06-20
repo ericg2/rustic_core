@@ -4,13 +4,12 @@ use std::{
     path::{Path, PathBuf},
 };
 use std::io::Write;
-use bytesize::ByteSize;
 use derive_setters::Setters;
 use ignore::{Walk, WalkBuilder};
 use log::warn;
-use serde_with::{DisplayFromStr, serde_as};
+use serde_with::serde_as;
 
-use rustic_core::{ErrorKind, Excludes, FilterOptions, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult, WriteFileOpen, WriteHandle};
+use rustic_core::{ErrorKind, Excludes, FilterOptions, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult, WriteFileOpen};
 
 use crate::local::mapper::LocalSaveOptions;
 use serde::{Deserialize, Serialize};
