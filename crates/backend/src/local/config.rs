@@ -1,11 +1,11 @@
+use crate::local::backend::LocalBackend;
+use derive_setters::Setters;
+use rustic_core::{ErrorKind, RepositoryConfig, RusticError, RusticResult, WriteBackend};
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use derive_setters::Setters;
-use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
-use rustic_core::{ErrorKind, RepositoryConfig, RusticError, RusticResult, WriteBackend};
-use crate::local::backend::LocalBackend;
 
 #[serde_as]
 #[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
@@ -59,7 +59,7 @@ impl LocalConfig {
 
 impl RepositoryConfig for LocalConfig {
     fn get_path(&self) -> Option<String> {
-        self.path.clone().map(|x|x.to_string_lossy().to_string())
+        self.path.clone().map(|x| x.to_string_lossy().to_string())
     }
 
     fn get_options(&self) -> HashMap<String, String> {

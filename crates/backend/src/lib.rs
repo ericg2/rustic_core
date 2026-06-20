@@ -163,8 +163,7 @@ pub(crate) fn struct_to_map<T: serde::Serialize>(value: &T) -> HashMap<String, S
         }
     }
 
-    let v = serde_value::to_value(value)
-        .expect("failed to serialize struct");
+    let v = serde_value::to_value(value).expect("failed to serialize struct");
 
     let mut out = HashMap::new();
 

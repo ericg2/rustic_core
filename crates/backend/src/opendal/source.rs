@@ -2,9 +2,9 @@ use crate::filter::ExcludeFilter;
 use crate::opendal::{OpenDALBackend, OpenDALConfig};
 
 use log::warn;
+use opendal::Entry;
 use opendal::blocking::{StdReader, StdWriter};
 use opendal::options::{ListOptions, WriteOptions};
-use opendal::Entry;
 
 use rustic_core::{
     ErrorKind, Excludes, Node, NodeType, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder,

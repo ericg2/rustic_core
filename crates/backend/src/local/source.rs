@@ -1,15 +1,18 @@
+use derive_setters::Setters;
+use ignore::{Walk, WalkBuilder};
+use log::warn;
+use serde_with::serde_as;
+use std::io::Write;
 use std::{
     ffi::OsString,
     fs::File,
     path::{Path, PathBuf},
 };
-use std::io::Write;
-use derive_setters::Setters;
-use ignore::{Walk, WalkBuilder};
-use log::warn;
-use serde_with::serde_as;
 
-use rustic_core::{ErrorKind, Excludes, FilterOptions, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult, WriteFileOpen};
+use rustic_core::{
+    ErrorKind, Excludes, FilterOptions, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder,
+    ReadSourceEntry, RusticError, RusticResult, WriteFileOpen,
+};
 
 use crate::local::mapper::LocalSaveOptions;
 use serde::{Deserialize, Serialize};
@@ -220,7 +223,6 @@ impl ReadFileOpen for LocalFile {
     }
 }
 
-
 impl WriteFileOpen for LocalFile {
     type Writer = File;
 
@@ -237,7 +239,7 @@ impl WriteFileOpen for LocalFile {
                     "Failed to open file for writing at `{path}`.",
                     err,
                 )
-                    .attach_context("path", path.display().to_string())
+                .attach_context("path", path.display().to_string())
             })
     }
 }

@@ -10,9 +10,9 @@ use std::{
 };
 
 use crate::local::LocalSource;
-use crate::local::source::{LocalFile, LocalReader};
 #[cfg(not(windows))]
 use crate::local::mapper::nix_mapper::map_mode_from_go;
+use crate::local::source::{LocalFile, LocalReader};
 use derive_setters::Setters;
 use filetime::{FileTime, set_symlink_file_times};
 use jiff::Timestamp;
@@ -28,7 +28,8 @@ use nix::{
 };
 use rustic_core::repofile::{Metadata, Node};
 use rustic_core::{
-    Destination, DestinationBuilder, ErrorKind, ExtendedAttribute, ReadSourceBuilder, RestoreOptions, RusticError, RusticResult,
+    Destination, DestinationBuilder, ErrorKind, ExtendedAttribute, ReadSourceBuilder,
+    RestoreOptions, RusticError, RusticResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;

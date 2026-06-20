@@ -5,7 +5,10 @@ use anyhow::Result;
 use insta::Settings;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{BackupOptions, LsOptions, RusticResult, repofile::{Metadata, Node, SnapshotFile}};
+use rustic_core::{
+    BackupOptions, LsOptions, RusticResult,
+    repofile::{Metadata, Node, SnapshotFile},
+};
 
 use super::{
     RepoOpen, TestSource, assert_with_win, insta_node_redaction, set_up_repo, tar_gz_testdata,

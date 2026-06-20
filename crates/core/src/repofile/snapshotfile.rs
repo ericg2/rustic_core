@@ -3,14 +3,6 @@ mod modification;
 
 pub use modification::SnapshotModification;
 
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BTreeSet},
-    fmt::{self, Display},
-    ops::Index,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
 use derive_setters::Setters;
 use dunce::canonicalize;
 use gethostname::gethostname;
@@ -20,6 +12,14 @@ use log::{info, warn};
 use path_dedot::ParseDot;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as, skip_serializing_none};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+    fmt::{self, Display},
+    ops::Index,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 #[cfg(feature = "clap")]
 use clap::ValueHint;
@@ -748,7 +748,7 @@ impl SnapshotFile {
 
     fn latest_n_from_iter(
         n: usize,
-        iter: impl IntoIterator<Item=Self>,
+        iter: impl IntoIterator<Item = Self>,
     ) -> RusticResult<Vec<Self>> {
         let latest: Vec<_> = iter
             .into_iter()
@@ -881,7 +881,7 @@ impl SnapshotFile {
         be: &B,
         filter: F,
         p: &Progress,
-    ) -> RusticResult<impl Iterator<Item=Self>>
+    ) -> RusticResult<impl Iterator<Item = Self>>
     where
         B: DecryptReadBackend,
         F: FnMut(&Self) -> bool,
@@ -1165,7 +1165,7 @@ impl StringList {
     }
 
     /// Turn this [`StringList`] into an Iterator
-    pub fn iter(&self) -> impl Iterator<Item=&String> {
+    pub fn iter(&self) -> impl Iterator<Item = &String> {
         self.0.iter()
     }
 }
@@ -1194,7 +1194,6 @@ impl PathLister for PathList {
         self.clone()
     }
 }
-
 
 /// `PathList` is a rustic-internal list of `PathBuf`s. It is used in the [`crate::Repository::backup`] command.
 #[derive(Default, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
@@ -1236,7 +1235,6 @@ impl From<String> for PathList {
     }
 }
 
-
 impl Display for PathList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0
@@ -1248,7 +1246,7 @@ impl Display for PathList {
 }
 
 impl<T: Into<PathBuf>> FromIterator<T> for PathList {
-    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         Self(iter.into_iter().map(T::into).collect())
     }
 }
@@ -1534,7 +1532,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-            .unwrap();
+        .unwrap();
         assert_eq!(latest, snap_id3);
 
         let snap_id3 = SnapshotFile::from_str(&be, "003", |_sn| true, &p).unwrap();
@@ -1580,7 +1578,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-            .unwrap();
+        .unwrap();
         let ids: Vec<_> = snaps.iter().map(|sn| *sn.id).collect();
         assert_eq!(ids, vec![id1, id2, id3]);
 
@@ -1595,7 +1593,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-            .unwrap();
+        .unwrap();
         let ids: Vec<_> = snaps.iter().map(|sn| *sn.id).collect();
         assert_eq!(ids, vec![id2, id2, id1]);
 
@@ -1623,7 +1621,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-            .unwrap();
+        .unwrap();
         let ids: Vec<_> = snaps.iter().map(|sn| *sn.id).collect();
         assert_eq!(ids, vec![id3, id1]);
 
@@ -1638,7 +1636,7 @@ mod tests {
             |_sn| true,
             &p,
         )
-            .unwrap();
+        .unwrap();
         let ids: Vec<_> = snaps.iter().map(|sn| *sn.id).collect();
         assert_eq!(ids, vec![id3, id1, id3]);
     }

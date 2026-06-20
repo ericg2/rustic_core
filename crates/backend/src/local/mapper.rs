@@ -12,11 +12,13 @@ use serde_with::serde_as;
 
 use crate::local::source::{IgnoreErrorKind, IgnoreResult, LocalFile};
 
-
+use rustic_core::{
+    DevIdOption, ExtendedAttribute, Metadata, Node, NodeType, ReadSourceEntry, TimeOption,
+    XattrOption,
+};
 #[cfg(not(windows))]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::PathBuf;
-use rustic_core::{TimeOption, DevIdOption, XattrOption, ReadSourceEntry, Metadata, Node, NodeType, ExtendedAttribute};
 
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -26,7 +28,6 @@ pub enum BlockdevOption {
     Special,
     File,
 }
-
 
 #[serde_as]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
@@ -88,7 +89,11 @@ impl LocalSaveOptions {
     ///
     /// * If metadata could not be read.
     /// * If the xattr of the entry could not be read.
-    pub fn map_entry(self, roots: &Vec<PathBuf>, entry: DirEntry) -> IgnoreResult<ReadSourceEntry<LocalFile>> {
+    pub fn map_entry(
+        self,
+        roots: &Vec<PathBuf>,
+        entry: DirEntry,
+    ) -> IgnoreResult<ReadSourceEntry<LocalFile>> {
         let name = entry.file_name();
         let m = entry
             .metadata()
@@ -143,7 +148,11 @@ impl LocalSaveOptions {
         let abs_path = entry.into_path();
         let rel_path = strip_roots(&abs_path, roots);
         let open = Some(LocalFile(abs_path.clone()));
-        Ok(ReadSourceEntry { path: rel_path, node, open })
+        Ok(ReadSourceEntry {
+            path: rel_path,
+            node,
+            open,
+        })
     }
 
     fn to_node(

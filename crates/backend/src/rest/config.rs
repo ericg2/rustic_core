@@ -103,7 +103,7 @@ impl RestConfig {
             tls_client_cert: None,
         }
     }
-    
+
     /// Creates a [`RestConfig`] from an iterator.
     ///
     /// # Important

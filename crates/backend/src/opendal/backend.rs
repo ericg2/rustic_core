@@ -12,13 +12,13 @@ use std::sync::OnceLock;
 use tokio::runtime::Runtime;
 use typed_path::UnixPathBuf;
 
+use crate::opendal::OpenDALSource;
 use crate::opendal::config::*;
 use crate::opendal::log::OpenLogLayer;
 use crate::opendal::source::OpenDALReader;
-use crate::opendal::OpenDALSource;
 use rustic_core::{
-    ALL_FILE_TYPES, ErrorKind, FileType, Id, ReadBackend, ReadSource, ReadSourceBuilder, RusticError,
-    RusticResult, WriteBackend,
+    ALL_FILE_TYPES, ErrorKind, FileType, Id, ReadBackend, ReadSource, ReadSourceBuilder,
+    RusticError, RusticResult, WriteBackend,
 };
 
 mod constants {
@@ -70,13 +70,14 @@ impl OpenDALBackend {
         }
 
         let _guard = runtime().enter();
-        let operator = Operator::new(operator.layer(LoggingLayer::new(OpenLogLayer))).map_err(|err| {
-            RusticError::with_source(
-                ErrorKind::Backend,
-                "Creating blocking Operator from path failed.",
-                err,
-            )
-        })?;
+        let operator =
+            Operator::new(operator.layer(LoggingLayer::new(OpenLogLayer))).map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::Backend,
+                    "Creating blocking Operator from path failed.",
+                    err,
+                )
+            })?;
 
         Ok(Self {
             operator,

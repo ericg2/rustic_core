@@ -1,9 +1,11 @@
 //! `backup` example
+use rustic_backend::local::{LocalConfig, LocalSource};
 use rustic_backend::BackendOptions;
-use rustic_core::{BackupOptions, Credentials, PathList, Repository, RepositoryOptions, SnapshotOptions};
+use rustic_core::{
+    BackupOptions, Credentials, PathList, Repository, RepositoryOptions, SnapshotOptions,
+};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
-use rustic_backend::local::{LocalConfig, LocalSource};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Display info logs
@@ -21,7 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let repo = Repository::new(&repo_opts, &backends)?
         .open(&credentials)?
         .to_indexed_ids()?;
-    
+
     let paths = PathList::from_string("/")?;
     let backup_opts = BackupOptions::default();
     let source = LocalSource::new(paths);

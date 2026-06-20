@@ -1,10 +1,12 @@
-use std::io::{stdin, Stdin};
-use std::iter::{once, Once};
-use std::path::{Path, PathBuf};
 use derive_setters::Setters;
+use rustic_core::{
+    ErrorKind, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult,
+};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use rustic_core::{ErrorKind, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult};
+use std::io::{Stdin, stdin};
+use std::iter::{Once, once};
+use std::path::{Path, PathBuf};
 
 #[serde_as]
 #[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
@@ -14,14 +16,14 @@ use rustic_core::{ErrorKind, ReadSource, ReadSourceBuilder, ReadSourceEntry, Rus
 /// A source to read from console input.
 pub struct StdinSource {
     /// The output [`Path`] to save to.
-    pub output: Option<PathBuf>
+    pub output: Option<PathBuf>,
 }
 
 impl StdinSource {
     /// Creates a new [`StdinSource`] with the path to output to.
     pub fn new(output: impl AsRef<Path>) -> Self {
         Self {
-            output: Some(output.as_ref().to_path_buf())
+            output: Some(output.as_ref().to_path_buf()),
         }
     }
 }
@@ -30,7 +32,10 @@ impl ReadSourceBuilder for StdinSource {
     type Reader = StdinReader;
 
     fn get_reader(&self) -> RusticResult<Self::Reader> {
-        let output = self.output.clone().ok_or(RusticError::new(ErrorKind::Configuration, "Output must be filled in"))?;
+        let output = self.output.clone().ok_or(RusticError::new(
+            ErrorKind::Configuration,
+            "Output must be filled in",
+        ))?;
         Ok(StdinReader::new(output))
     }
 }

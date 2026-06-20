@@ -7,7 +7,7 @@ use rustic_core::{
     ErrorKind, RepositoryBackends, RepositoryConfig, RusticError, RusticResult, WriteBackend,
 };
 
-use crate::util::{location_to_type_and_path, BackendLocation};
+use crate::util::{BackendLocation, location_to_type_and_path};
 
 use crate::local::LocalConfig;
 use crate::opendal::OpenDALConfig;

@@ -14,11 +14,10 @@ use std::{
 };
 use url::Url;
 
-use rustic_core::{
-    CommandInput, ErrorKind, FileType, Id, ReadBackend, RusticError,
-    RusticResult, WriteBackend,
-};
 use crate::rclone::RcloneConfig;
+use rustic_core::{
+    CommandInput, ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult, WriteBackend,
+};
 
 pub(super) mod constants {
     /// The default command called if no other is specified

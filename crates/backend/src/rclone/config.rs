@@ -1,10 +1,10 @@
+use crate::rclone::backend::RcloneBackend;
+use derive_setters::Setters;
+use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};
+use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, serde_as};
 use std::collections::HashMap;
 use std::sync::Arc;
-use derive_setters::Setters;
-use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DisplayFromStr};
-use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};
-use crate::rclone::backend::RcloneBackend;
 
 #[serde_as]
 #[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]

@@ -10,11 +10,11 @@ use std::{
 };
 use walkdir::WalkDir;
 
-use rustic_core::{
-    ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, ReadBackend,
-    RusticError, RusticResult, WriteBackend,
-};
 use crate::local::config::LocalConfig;
+use rustic_core::{
+    ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult,
+    WriteBackend,
+};
 
 /// A local backend.
 #[derive(Debug)]
@@ -27,10 +27,7 @@ pub struct LocalBackend {
 
 impl LocalBackend {
     pub(crate) fn new(path: PathBuf, config: LocalConfig) -> Self {
-        Self {
-            path,
-            config,
-        }
+        Self { path, config }
     }
 
     /// Base path of the given file type and id.

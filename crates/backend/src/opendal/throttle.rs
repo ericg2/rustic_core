@@ -1,10 +1,10 @@
-use std::fmt;
-use std::str::FromStr;
 use bytesize::ByteSize;
 use derive_setters::Setters;
+use rustic_core::{ErrorKind, RusticError, RusticResult};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use rustic_core::{ErrorKind, RusticError, RusticResult};
+use std::fmt;
+use std::str::FromStr;
 
 /// Throttling parameters
 ///
@@ -52,7 +52,7 @@ impl FromStr for Throttle {
                         "Parsing ByteSize from throttle string `{string}` failed",
                         err,
                     )
-                        .attach_context("string", s)
+                    .attach_context("string", s)
                 })
             })
             .map(|b| -> RusticResult<u32> {
@@ -63,7 +63,7 @@ impl FromStr for Throttle {
                         "Converting ByteSize `{bytesize}` to u32 failed",
                         err,
                     )
-                        .attach_context("bytesize", bytesize.to_string())
+                    .attach_context("bytesize", bytesize.to_string())
                 })
             });
 

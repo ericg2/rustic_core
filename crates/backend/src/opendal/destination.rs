@@ -132,7 +132,8 @@ impl Destination for OpenDALWriter {
         let path = path_to_str(&self.root, path, false);
 
         if size == 0 {
-            let _ = self.be
+            let _ = self
+                .be
                 .operator
                 .write(&path, Vec::<u8>::new())
                 .map_err(|err| {
@@ -142,15 +143,24 @@ impl Destination for OpenDALWriter {
         }
 
         // OpenDAL doesn't provide a generic truncate API.
-        Err(RusticError::new(ErrorKind::Unsupported, "Cannot set OpenDAL length > 0"))
+        Err(RusticError::new(
+            ErrorKind::Unsupported,
+            "Cannot set OpenDAL length > 0",
+        ))
     }
 
     fn get_reader(&self, path: &Path) -> RusticResult<Self::Reader> {
-        Ok(OpenDALFile(self.be.clone(), path_to_str(&self.root, path, false)))
+        Ok(OpenDALFile(
+            self.be.clone(),
+            path_to_str(&self.root, path, false),
+        ))
     }
 
     fn get_writer(&self, path: &Path) -> RusticResult<Self::Writer> {
-        Ok(OpenDALFile(self.be.clone(), path_to_str(&self.root, path, false)))
+        Ok(OpenDALFile(
+            self.be.clone(),
+            path_to_str(&self.root, path, false),
+        ))
     }
 
     fn get_existing(&self, path: &Path) -> RusticResult<Option<Metadata>> {

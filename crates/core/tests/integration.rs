@@ -51,10 +51,10 @@ use insta::{
     internals::{Content, ContentPath},
 };
 use rstest::fixture;
+use rustic_backend::local::LocalConfig;
 use serde::Serialize;
 use tar::Archive;
 use tempfile::{TempDir, tempdir};
-use rustic_backend::local::LocalConfig;
 // uncomment for logging output
 // use simplelog::{Config, SimpleLogger};
 

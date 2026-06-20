@@ -1,8 +1,8 @@
-use std::fmt::Display;
-use log::{log, Level};
-use opendal::{Error, ErrorKind};
+use log::{Level, log};
 use opendal::layers::LoggingInterceptor;
 use opendal::raw::{AccessorInfo, Operation};
+use opendal::{Error, ErrorKind};
+use std::fmt::Display;
 
 static LOGGING_TARGET: &str = "opendal::services";
 
@@ -25,7 +25,7 @@ impl LoggingInterceptor for OpenLogLayer {
             if err.kind() == ErrorKind::NotFound && operation == Operation::Stat {
                 return; // *** we don't need to log this condition in Rustic.
             }
-            
+
             let lvl = if err.kind() == ErrorKind::Unexpected {
                 Level::Error
             } else {

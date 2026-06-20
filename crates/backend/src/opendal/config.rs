@@ -1,13 +1,11 @@
+use crate::opendal::{OpenDALBackend, Throttle, opendal_add};
 use crate::retry::RetrySetting;
 use derive_setters::Setters;
-use opendal::Builder;
 use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::opendal::{OpenDALBackend, Throttle};
-use crate::opendal_add;
 
 #[cfg(windows)]
 opendal_add!(
@@ -113,7 +111,7 @@ impl OpenDALConfig {
 
 impl RepositoryConfig for OpenDALConfig {
     fn get_path(&self) -> Option<String> {
-        self.config.key().map(|x|format!("opendal:{}", &x))
+        self.config.key().map(|x| format!("opendal:{}", &x))
     }
 
     fn get_options(&self) -> HashMap<String, String> {

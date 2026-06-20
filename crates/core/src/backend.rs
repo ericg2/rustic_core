@@ -25,9 +25,9 @@ use serde::de::DeserializeOwned;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::fs::File;
 use std::io::{Seek, Write};
 use std::{io::Read, ops::Deref, path::PathBuf, sync::Arc};
-use std::fs::File;
 
 /// [`BackendErrorKind`] describes the errors that can be returned by the various Backends
 #[derive(thiserror::Error, Debug, displaydoc::Display)]

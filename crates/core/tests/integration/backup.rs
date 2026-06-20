@@ -9,7 +9,11 @@ use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_backend::stdout::CommandSource;
-use rustic_core::{BackupOptions, CommandInput, Grouped, ParentOptions, SnapshotGroupCriterion, SnapshotOptions, StringList, repofile::{PackId, SnapshotFile}, FilterOptions, Node, NodeType, Metadata, LsOptions, RusticResult};
+use rustic_core::{
+    BackupOptions, CommandInput, FilterOptions, Grouped, LsOptions, Metadata, Node, NodeType,
+    ParentOptions, RusticResult, SnapshotGroupCriterion, SnapshotOptions, StringList,
+    repofile::{PackId, SnapshotFile},
+};
 
 use super::{
     RepoOpen, TestSource, assert_with_win, insta_node_redaction, insta_snapshotfile_redaction,
@@ -275,12 +279,10 @@ fn test_backup_excludes_xattr_entries(set_up_repo: Result<RepoOpen>) -> Result<(
     let repo = set_up_repo?.to_indexed_ids()?;
     let paths = PathList::from_iter(Some(base.to_path_buf()));
 
+    let filter_opts =
+        FilterOptions::default().exclude_if_xattr(vec!["user.rustic_test_exclude".to_string()]);
 
-    let filter_opts = FilterOptions::default()
-        .exclude_if_xattr(vec!["user.rustic_test_exclude".to_string()]);
-
-    let opts = BackupOptions::default()
-        .as_path(PathBuf::from("test"));
+    let opts = BackupOptions::default().as_path(PathBuf::from("test"));
 
     let src = LocalSource::new(paths).filter_opts(filter_opts);
     let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;

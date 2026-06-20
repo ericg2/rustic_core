@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::opendal::{OpenDALConfig, OpenDALSource};
     use crate::opendal::Throttle;
+    use crate::opendal::{OpenDALConfig, OpenDALSource};
     use std::collections::BTreeMap;
     use std::str::FromStr;
 

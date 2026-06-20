@@ -65,7 +65,7 @@ fn test_prune(
         .max_unused(max_unused)
         .keep_delete(Span::default())
         .fast_repack(fast_repack);
-    
+
     let plan = repo.prune_plan(&prune_opts)?;
     // TODO: Snapshot-test the plan (currently doesn't impl Serialize)
     // assert_ron_snapshot!("prune", plan);

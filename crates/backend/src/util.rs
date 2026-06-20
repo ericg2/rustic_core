@@ -26,7 +26,6 @@ impl std::fmt::Display for BackendLocation {
     }
 }
 
-
 /// Splits the given url into the backend type and the path.
 ///
 /// # Arguments

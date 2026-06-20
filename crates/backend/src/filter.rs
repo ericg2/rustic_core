@@ -4,7 +4,6 @@ use ignore::overrides::Override;
 use rustic_core::{Excludes, ReadSourceEntry, RusticResult};
 use std::path::PathBuf;
 
-
 /// A generic filter which can handle [`Excludes`] cases.
 pub struct ExcludeFilter {
     sort: Override,

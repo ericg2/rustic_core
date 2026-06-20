@@ -1,11 +1,11 @@
 mod backend;
+mod config;
 mod destination;
+mod log;
 mod source;
+mod tests;
 mod throttle;
 mod util;
-mod tests;
-mod config;
-mod log;
 
 pub use config::{OpenDALConfig, Scheme};
 pub use destination::OpenDALDestination;
@@ -71,7 +71,7 @@ macro_rules! opendal_add {
                    $variant([<$variant Config>]),
                 )*
             }
-            
+
             impl Default for Scheme {
                 fn default() -> Self {
                     Self::Dynamic {
@@ -259,3 +259,5 @@ macro_rules! opendal_add {
         }
     };
 }
+
+pub(crate) use opendal_add;

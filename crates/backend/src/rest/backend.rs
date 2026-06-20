@@ -11,9 +11,7 @@ use reqwest::{
     blocking::{Client, ClientBuilder},
     header::HeaderMap,
 };
-use rustic_core::{
-    ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult, WriteBackend,
-};
+use rustic_core::{ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult, WriteBackend};
 use serde::Deserialize;
 
 /// joining URL failed on: `{0}`

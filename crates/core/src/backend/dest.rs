@@ -1,20 +1,20 @@
+use crate::backend::SeekFileOpen;
 use crate::repofile::{Metadata, Node};
 use crate::{ReadFileOpen, ReadSource, RestoreOptions, RusticResult, WriteFileOpen};
 use bytes::Bytes;
 use std::path::{Path, PathBuf};
-use crate::backend::SeekFileOpen;
 
 pub trait Destination: Send + Sync {
     /// The [`ReadSource`] to list files for this [`Destination`].
     type Iterator: ReadSource;
     type Reader: SeekFileOpen;
     type Writer: WriteFileOpen;
-    
+
     /// Attempts to read current files in [`Destination`].
-    /// 
+    ///
     /// # Errors
     /// * If the path could not be read.
-    /// 
+    ///
     fn read_source(&self) -> RusticResult<Self::Iterator>;
 
     /// Remove the given directory (relative to the base path)
@@ -76,7 +76,12 @@ pub trait Destination: Send + Sync {
     /// # Errors
     ///
     /// * If the times could not be set
-    fn set_restore_metadata(&self, path: &Path, node: &Node, opts: &RestoreOptions) -> RusticResult<()>;
+    fn set_restore_metadata(
+        &self,
+        path: &Path,
+        node: &Node,
+        opts: &RestoreOptions,
+    ) -> RusticResult<()>;
 
     /// Set length of `item` (relative to the base path)
     ///

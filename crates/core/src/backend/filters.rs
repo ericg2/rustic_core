@@ -1,6 +1,6 @@
 use bytesize::ByteSize;
 use derive_setters::Setters;
-use serde_with::{serde_as, DisplayFromStr};
+use serde_with::{DisplayFromStr, serde_as};
 
 #[serde_as]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
@@ -50,4 +50,3 @@ pub struct FilterOptions {
     #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub exclude_larger_than: Option<ByteSize>,
 }
-
