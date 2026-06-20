@@ -70,7 +70,7 @@ impl OpenDALBackend {
         }
 
         let _guard = runtime().enter();
-        let operator = Operator::new(operator.layer(LoggingLayer::default())).map_err(|err| {
+        let operator = Operator::new(operator.layer(LoggingLayer::new(OpenLogLayer))).map_err(|err| {
             RusticError::with_source(
                 ErrorKind::Backend,
                 "Creating blocking Operator from path failed.",
