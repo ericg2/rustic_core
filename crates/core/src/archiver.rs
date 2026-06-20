@@ -160,7 +160,7 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
                     let snapshot_path = if let Some(as_path) = as_path {
                         as_path
                             .clone()
-                            .join(path.strip_prefix(backup_path).unwrap())
+                            .join(path.strip_prefix(backup_path).unwrap_or(&Path::new("")))
                     } else {
                         path
                     };
