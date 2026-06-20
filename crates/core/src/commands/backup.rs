@@ -23,9 +23,9 @@ use crate::{
     repository::{IndexedIds, IndexedTree, Repository},
 };
 
+use crate::backend::dry_run::DryRunBackend;
 #[cfg(feature = "clap")]
 use clap::ValueHint;
-use crate::backend::dry_run::DryRunBackend;
 
 /// `backup` subcommand
 #[serde_as]
@@ -161,7 +161,7 @@ pub struct BackupOptions {
     #[cfg_attr(feature = "clap", clap(flatten))]
     #[serde(flatten)]
     /// Options how to use a parent snapshot
-    pub parent_opts: ParentOptions
+    pub parent_opts: ParentOptions,
 }
 
 /// Backup data, create a snapshot.
@@ -255,7 +255,7 @@ where
     let snap = archiver.archive(
         &src,
         &backup_paths[0],
-        as_path.as_ref(),
+        Some(as_path.as_ref().unwrap_or(&backup_paths[0])),
         opts.parent_opts.skip_if_unchanged,
         opts.no_scan,
         &p,
