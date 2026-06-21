@@ -542,20 +542,6 @@ pub trait RepositoryConfig: Debug + Send + Sync {
     fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>>;
 }
 
-impl<T: RepositoryConfig + ?Sized> RepositoryConfig for &T {
-    fn get_path(&self) -> Option<String> {
-        (**self).get_path()
-    }
-
-    fn get_options(&self) -> HashMap<String, String> {
-        (**self).get_options()
-    }
-
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-        (**self).get_repo()
-    }
-}
-
 /// blanket implementation for readers
 impl<T: Read + Send + Sync + 'static> ReadFileOpen for T {
     type Reader = T;

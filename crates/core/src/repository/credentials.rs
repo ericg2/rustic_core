@@ -11,7 +11,7 @@ use clap::ValueHint;
 
 use crate::{CommandInput, ErrorKind, RusticError, RusticResult, repofile::MasterKey};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 /// Credential to open a repository
 pub enum Credentials {
     /// credentials are given directly by specifying the masterkey
