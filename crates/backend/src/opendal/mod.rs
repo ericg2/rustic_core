@@ -109,7 +109,8 @@ macro_rules! opendal_add {
                     }
                 }
 
-                pub(crate) fn operator(&self) -> opendal::Result<opendal::Operator> {
+                #[doc = "Attempts to create an Operator based on the Scheme."]
+                pub fn operator(&self) -> opendal::Result<opendal::Operator> {
                     match self {
                         Scheme::Dynamic { backend, config } => {
                             opendal::Operator::via_iter(
