@@ -9,19 +9,13 @@ use path_dedot::ParseDot;
 use serde_derive::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 
-use crate::{
-    ReadSource,
-    archiver::{Archiver, parent::Parent},
-    error::{ErrorKind, RusticError, RusticResult},
-    repofile::{
-        PathList, SnapshotFile,
-        snapshotfile::{
-            SnapshotId,
-            grouping::{SnapshotGroup, SnapshotGroupCriterion},
-        },
+use crate::{ReadSource, archiver::{Archiver, parent::Parent}, error::{ErrorKind, RusticError, RusticResult}, repofile::{
+    PathList, SnapshotFile,
+    snapshotfile::{
+        SnapshotId,
+        grouping::{SnapshotGroup, SnapshotGroupCriterion},
     },
-    repository::{IndexedIds, IndexedTree, Repository},
-};
+}, repository::{IndexedIds, IndexedTree, Repository}, CancelToken};
 
 use crate::backend::dry_run::DryRunBackend;
 #[cfg(feature = "clap")]
@@ -177,6 +171,7 @@ pub struct BackupOptions {
 /// * `opts` - The backup options
 /// * `src` - The source to backup
 /// * `snap` - The snapshot with raw information
+/// * `token` - The [`CancelToken`] to use.
 ///
 /// # Errors
 ///
@@ -194,6 +189,7 @@ pub(crate) fn backup<R, S>(
     opts: &BackupOptions,
     src: R,
     mut snap: SnapshotFile,
+    token: CancelToken,
 ) -> RusticResult<SnapshotFile>
 where
     S: IndexedIds,
@@ -254,76 +250,12 @@ where
     let p = repo.progress_bytes("backing up...");
     let snap = archiver.archive(
         &src,
-        &backup_paths[0],
         Some(as_path.as_ref().unwrap_or(&backup_paths[0])),
         opts.parent_opts.skip_if_unchanged,
         opts.no_scan,
         &p,
+        token,
     )?;
     src.close()?;
     Ok(snap)
 }
-//
-// Backup data, create a snapshot.
-//
-// # Type Parameters
-//
-// * `S` - The type of the indexed tree.
-//
-// # Arguments
-//
-// * `repo` - The repository to use
-// * `opts` - The backup options
-// * `source` - The source to backup
-// * `snap` - The snapshot with raw information
-//
-// # Errors
-//
-// * If sending the message to the raw packer fails.
-// * If converting the data length to u64 fails
-// * If sending the message to the raw packer fails.
-// * If the index file could not be serialized.
-// * If the time is not in the range of `Local::now()`
-//
-// # Returns
-//
-// The snapshot pointing to the backup'ed data.
-//
-// pub(crate) fn backup<R, S: IndexedIds>(
-//     repo: &Repository<S>,
-//     opts: &BackupOptions,
-//     source: &R,
-//     snap: SnapshotFile,
-// ) -> RusticResult<SnapshotFile>
-// where
-//     R: ReadSource + 'static,
-//     <R as ReadSource>::Open: Send,
-//     <R as ReadSource>::Iter: Send,
-// {
-//     let backup_stdin = PathList::from_string("-")?;
-//
-//     let snap = if *source == backup_stdin {
-//         let path = PathBuf::from(&opts.stdin_filename);
-//         let backup_paths = vec![path.clone()];
-//         if let Some(command) = &opts.stdin_command {
-//             let src = ChildStdoutSource::new(command, path)?;
-//             let res = archive(repo, opts, &src, snap, &backup_paths)?;
-//             src.finish()?;
-//             res
-//         } else {
-//             let src = StdinSource::new(path);
-//             archive(repo, opts, &src, snap, &backup_paths)?
-//         }
-//     } else {
-//         let backup_path = source.paths();
-//         let src = LocalSource::new(
-//             opts.ignore_save_opts,
-//             &opts.excludes,
-//             &opts.ignore_filter_opts,
-//             &backup_path,
-//         )?;
-//         archive(repo, opts, &src, snap, &backup_path)?
-//     };
-//
-//     Ok(snap)
-// }
