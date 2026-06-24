@@ -130,25 +130,26 @@ pub use jiff;
 // rustic_core Public API
 pub use crate::{
     backend::{
-        decrypt::{compression_level_range, max_compression_level}, dest::Destination, filters::FilterOptions, node::{
-            last_modified_node, modification::{
+        ALL_FILE_TYPES, DestinationBuilder, FileType, ReadBackend, ReadFileOpen, ReadSource,
+        ReadSourceBuilder, ReadSourceEntry, RepositoryBackends, RepositoryConfig, SeekFileOpen,
+        WriteBackend, WriteFileOpen, WriteHandle,
+        decrypt::{compression_level_range, max_compression_level},
+        dest::Destination,
+        filters::FilterOptions,
+        node::{
+            ExtendedAttribute, Metadata, Node, NodeType, last_modified_node,
+            modification::{
                 BlockdevOption, DevIdOption, NodeModification, TimeOption, XattrOption,
-            }, ExtendedAttribute, Metadata, Node,
-            NodeType,
-        }, token::CancelToken, DestinationBuilder, FileType,
-        ReadBackend, ReadFileOpen, ReadSource, ReadSourceBuilder, ReadSourceEntry,
-        RepositoryBackends, RepositoryConfig, SeekFileOpen,
-        WriteBackend,
-        WriteFileOpen,
-        WriteHandle,
-        ALL_FILE_TYPES,
+            },
+        },
+        token::CancelToken,
     },
     blob::{
+        BlobId, DataId, PackedId,
         tree::{
-            excludes::Excludes, rewrite::RewriteTreesOptions, FindMatches, FindNode, TreeId,
-            TreeStreamerOptions as LsOptions,
-        }, BlobId, DataId,
-        PackedId,
+            FindMatches, FindNode, TreeId, TreeStreamerOptions as LsOptions, excludes::Excludes,
+            rewrite::RewriteTreesOptions,
+        },
     },
     commands::{
         backup::{BackupOptions, ParentOptions},
@@ -170,14 +171,14 @@ pub use crate::{
         RusticProgress,
     },
     repofile::snapshotfile::{
-        grouping::{Group, Grouped, SnapshotGroup, SnapshotGroupCriterion}, PathList, SnapshotOptions,
-        StringList,
+        PathList, SnapshotOptions, StringList,
+        grouping::{Group, Grouped, SnapshotGroup, SnapshotGroupCriterion},
     },
     repository::{
-        command_input::{CommandInput, CommandInputErrorKind}, credentials::{CredentialOptions, Credentials}, IndexedFull, IndexedFullStatus, IndexedIds,
-        IndexedIdsStatus, IndexedTree, IndexedTreesStatus, Open, OpenStatus,
-        Repository,
-        RepositoryOptions,
+        IndexedFull, IndexedFullStatus, IndexedIds, IndexedIdsStatus, IndexedTree,
+        IndexedTreesStatus, Open, OpenStatus, Repository, RepositoryOptions,
+        command_input::{CommandInput, CommandInputErrorKind},
+        credentials::{CredentialOptions, Credentials},
     },
 };
 
