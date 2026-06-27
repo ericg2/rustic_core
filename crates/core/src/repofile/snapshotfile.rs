@@ -1052,6 +1052,22 @@ impl FromStr for StringList {
     }
 }
 
+impl<K, V, I> From<I> for StringList
+where
+    I: IntoIterator<Item = (K, V)>,
+    K: Into<String>,
+    V: Into<String>,
+{
+    fn from(value: I) -> Self {
+        Self(
+            value
+                .into_iter()
+                .map(|(k, v)| format!("{},{}", k.into(), v.into()))
+                .collect(),
+        )
+    }
+}
+
 impl Display for StringList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0.iter().join(","))?;
@@ -1234,6 +1250,7 @@ impl From<String> for PathList {
         PathList(vec![PathBuf::from(value)])
     }
 }
+
 
 impl Display for PathList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
