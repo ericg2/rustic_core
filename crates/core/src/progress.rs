@@ -90,7 +90,7 @@ pub trait RusticProgress: Send + Sync + 'static + std::fmt::Debug {
 }
 
 /// Type of progress
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum ProgressType {
     /// a progress spinner. Note that this progress doesn't get a length and is not advanced, only finished.
     Spinner,
