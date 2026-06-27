@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use log::info;
+use serde_derive::{Deserialize, Serialize};
 
 /// A progress used to indicate/update the status of something which is being processed
 #[derive(Debug, Clone)]
@@ -90,7 +91,7 @@ pub trait RusticProgress: Send + Sync + 'static + std::fmt::Debug {
 }
 
 /// Type of progress
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum ProgressType {
     /// a progress spinner. Note that this progress doesn't get a length and is not advanced, only finished.
     Spinner,
