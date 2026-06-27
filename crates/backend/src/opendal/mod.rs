@@ -7,6 +7,8 @@ mod tests;
 mod throttle;
 mod util;
 
+use std::collections::HashMap;
+use std::sync::Arc;
 pub use config::{OpenDALConfig, Scheme};
 pub use destination::OpenDALDestination;
 pub use source::OpenDALSource;
@@ -269,3 +271,4 @@ macro_rules! opendal_add {
 }
 
 pub(crate) use opendal_add;
+use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};

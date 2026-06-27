@@ -93,9 +93,9 @@ impl OpenDALConfig {
     /// # Arguments
     ///
     /// * `be` - The [`Scheme`] to use.
-    pub fn new(be: impl Into<Scheme>) -> Self {
+    pub fn new(be: &Scheme) -> Self {
         Self {
-            config: be.into(),
+            config: be.clone(),
             retry: RetrySetting::Default,
             connections: None,
             throttle: None,
