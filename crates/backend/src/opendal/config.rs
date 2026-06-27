@@ -1,3 +1,4 @@
+use std::hash::{Hash, Hasher};
 use crate::opendal::{OpenDALBackend, Throttle, opendal_add};
 use crate::retry::RetrySetting;
 use derive_setters::Setters;

@@ -72,6 +72,13 @@ macro_rules! opendal_add {
                 )*
             }
 
+            impl Hash for Scheme {
+                fn hash<H: Hasher>(&self, state: &mut H) {
+                    let s: &str = self.as_ref();
+                    s.hash(state);
+                }
+            }
+
             impl Default for Scheme {
                 fn default() -> Self {
                     Self::Dynamic {
