@@ -29,13 +29,18 @@ mod constants {
     pub(super) const DEFAULT_CONNECTIONS: u32 = 8;
 }
 
-fn runtime() -> &'static Runtime {
+fn runtime() -> tokio::runtime::Handle {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
-    RUNTIME.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .unwrap()
+    tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
+        RUNTIME
+            .get_or_init(|| {
+                tokio::runtime::Builder::new_multi_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+            })
+            .handle()
+            .clone()
     })
 }
 
@@ -69,15 +74,21 @@ impl OpenDALBackend {
             operator = operator.layer(ThrottleLayer::new(x.bandwidth, x.burst));
         }
 
-        let _guard = runtime().enter();
-        let operator =
-            Operator::new(operator.layer(LoggingLayer::new(OpenLogLayer))).map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::Backend,
-                    "Creating blocking Operator from path failed.",
-                    err,
-                )
-            })?;
+        let op = operator.layer(LoggingLayer::new(OpenLogLayer));
+        let operator = if tokio::runtime::Handle::try_current().is_ok() {
+            // Async context: block_in_place yields the thread to Tokio safely
+            tokio::task::block_in_place(|| Operator::new(op))
+        } else {
+            // Sync context: no runtime at all, just call it directly
+            Operator::new(op)
+        }
+        .map_err(|err| {
+            RusticError::with_source(
+                ErrorKind::Backend,
+                "Creating blocking Operator from path failed.",
+                err,
+            )
+        })?;
 
         Ok(Self {
             operator,
