@@ -1,5 +1,5 @@
 use crate::filter::ExcludeFilter;
-use crate::opendal::{OpenDALBackend};
+use crate::opendal::OpenDALBackend;
 
 use log::warn;
 
@@ -9,17 +9,17 @@ use rustic_core::{
 };
 
 use derive_setters::Setters;
+use opendal_ext::Entry;
+use opendal_ext::blocking::{StdReader, StdWriter};
+use opendal_ext::config::OpenDALConfig;
+use opendal_ext::options::{ListOptions, WriteOptions};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::ffi::OsStr;
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use opendal_ext::blocking::{StdReader, StdWriter};
-use opendal_ext::config::OpenDALConfig;
-use opendal_ext::Entry;
-use opendal_ext::options::{ListOptions, WriteOptions};
 
 #[serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Setters, Default)]

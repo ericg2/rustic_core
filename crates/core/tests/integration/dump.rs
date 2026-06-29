@@ -5,7 +5,10 @@ use bytesize::ByteSize;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{BackupOptions, ConfigOptions, IndexedFullStatus, PathList, Repository, repofile::{Chunker, SnapshotFile}, CancelToken};
+use rustic_core::{
+    BackupOptions, CancelToken, ConfigOptions, IndexedFullStatus, PathList, Repository,
+    repofile::{Chunker, SnapshotFile},
+};
 use tempfile::tempdir;
 
 use super::{RepoOpen, set_up_repo};

@@ -4,7 +4,10 @@ use std::os::unix::fs::MetadataExt;
 use anyhow::Result;
 use rustic_backend::BackendOptions;
 use rustic_backend::local::{LocalDestination, LocalSource};
-use rustic_core::{BackupOptions, ConfigOptions, Credentials, KeyOptions, LsOptions, Repository, RepositoryBackends, RepositoryOptions, RestoreOptions, SnapshotOptions, repofile::SnapshotFile, CancelToken};
+use rustic_core::{
+    BackupOptions, CancelToken, ConfigOptions, Credentials, KeyOptions, LsOptions, Repository,
+    RepositoryBackends, RepositoryOptions, RestoreOptions, SnapshotOptions, repofile::SnapshotFile,
+};
 
 #[test]
 fn test_restore_local() -> Result<()> {

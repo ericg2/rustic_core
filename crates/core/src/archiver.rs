@@ -10,13 +10,21 @@ use jiff::Zoned;
 use log::warn;
 use pariter::IteratorExt;
 
-use crate::{Progress, archiver::{
-    file_archiver::FileArchiver, parent::Parent, tree::TreeIterator,
-    tree_archiver::TreeArchiver,
-}, backend::{ReadSource, ReadSourceEntry, decrypt::DecryptFullBackend}, blob::BlobType, error::RusticResult, index::{
-    ReadGlobalIndex,
-    indexer::{Indexer, SharedIndexer},
-}, repofile::{configfile::ConfigFile, snapshotfile::SnapshotFile}, CancelToken};
+use crate::{
+    CancelToken, Progress,
+    archiver::{
+        file_archiver::FileArchiver, parent::Parent, tree::TreeIterator,
+        tree_archiver::TreeArchiver,
+    },
+    backend::{ReadSource, ReadSourceEntry, decrypt::DecryptFullBackend},
+    blob::BlobType,
+    error::RusticResult,
+    index::{
+        ReadGlobalIndex,
+        indexer::{Indexer, SharedIndexer},
+    },
+    repofile::{configfile::ConfigFile, snapshotfile::SnapshotFile},
+};
 
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 /// Tree stack empty
@@ -182,28 +190,28 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
                     }
                 },
             )
-                // archive files in parallel — check before each unit of work so
-                // in-flight threads drain quickly once canceled. Note: errors here
-                // are swallowed by the filter_map below; the definitive stop is in
-                // try_for_each.
-                .parallel_map_scoped(s, |item| {
-                    token.check()?;
-                    self.file_archiver.process(item, p)
-                })
-                .readahead_scoped(s)
-                .filter_map(|item| match item {
-                    Ok(item) => Some(item),
-                    Err(err) => {
-                        warn!("ignoring error: {}", err.display_log());
-                        None
-                    }
-                })
-                // This is where cancellation errors actually propagate and unwind
-                // the pipeline — the check here is the authoritative stop point.
-                .try_for_each(|item| {
-                    token.check()?;
-                    self.tree_archiver.add(item)
-                })?;
+            // archive files in parallel — check before each unit of work so
+            // in-flight threads drain quickly once canceled. Note: errors here
+            // are swallowed by the filter_map below; the definitive stop is in
+            // try_for_each.
+            .parallel_map_scoped(s, |item| {
+                token.check()?;
+                self.file_archiver.process(item, p)
+            })
+            .readahead_scoped(s)
+            .filter_map(|item| match item {
+                Ok(item) => Some(item),
+                Err(err) => {
+                    warn!("ignoring error: {}", err.display_log());
+                    None
+                }
+            })
+            // This is where cancellation errors actually propagate and unwind
+            // the pipeline — the check here is the authoritative stop point.
+            .try_for_each(|item| {
+                token.check()?;
+                self.tree_archiver.add(item)
+            })?;
 
             src_size_handle
                 .join()

@@ -1,7 +1,10 @@
 //! `backup` example
 use rustic_backend::local::{LocalRepo, LocalSource};
 use rustic_backend::BackendOptions;
-use rustic_core::{BackupOptions, CancelToken, Credentials, PathList, Repository, RepositoryOptions, SnapshotOptions};
+use rustic_core::{
+    BackupOptions, CancelToken, Credentials, PathList, Repository, RepositoryOptions,
+    SnapshotOptions,
+};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
 

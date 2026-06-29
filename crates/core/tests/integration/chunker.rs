@@ -5,7 +5,10 @@ use bytesize::ByteSize;
 use insta::{Settings, assert_ron_snapshot};
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{BackupOptions, ConfigOptions, repofile::{Chunker, SnapshotFile}, CancelToken};
+use rustic_core::{
+    BackupOptions, CancelToken, ConfigOptions,
+    repofile::{Chunker, SnapshotFile},
+};
 
 use super::{RepoOpen, TestSource, insta_snapshotfile_redaction, set_up_repo, tar_gz_testdata};
 

@@ -1,5 +1,8 @@
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use crate::{ErrorKind, RusticError};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 /// A lightweight cancellation token that can be cloned and shared across threads.
 ///
@@ -62,9 +65,9 @@ impl Default for CancelToken {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RusticResult;
     use std::thread;
     use std::time::Duration;
-    use crate::RusticResult;
 
     #[test]
     fn starts_uncancelled() {
@@ -107,7 +110,10 @@ mod tests {
             if token.is_cancelled() {
                 break;
             }
-            assert!(start.elapsed() < Duration::from_secs(1), "timed out waiting for cancel");
+            assert!(
+                start.elapsed() < Duration::from_secs(1),
+                "timed out waiting for cancel"
+            );
             thread::sleep(Duration::from_millis(5));
         }
 
@@ -117,7 +123,7 @@ mod tests {
     #[test]
     fn check_propagates_with_question_mark() {
         fn do_work(token: &CancelToken) -> RusticResult<()> {
-            token.check()?;          // returns early if canceled
+            token.check()?; // returns early if canceled
             Ok(())
         }
 

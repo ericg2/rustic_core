@@ -1,8 +1,8 @@
 use log::{Level, log};
-use std::fmt::Display;
-use opendal_ext::{Error, ErrorKind};
 use opendal_ext::layers::LoggingInterceptor;
 use opendal_ext::raw::{AccessorInfo, Operation};
+use opendal_ext::{Error, ErrorKind};
+use std::fmt::Display;
 
 static LOGGING_TARGET: &str = "opendal::services";
 

@@ -4,7 +4,11 @@ use anyhow::Result;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{BackupOptions, CheckOptions, ConfigOptions, Credentials, FileType, KeyOptions, ReadBackend, Repository, RepositoryBackends, RepositoryOptions, WriteBackend, repofile::SnapshotFile, CancelToken};
+use rustic_core::{
+    BackupOptions, CancelToken, CheckOptions, ConfigOptions, Credentials, FileType, KeyOptions,
+    ReadBackend, Repository, RepositoryBackends, RepositoryOptions, WriteBackend,
+    repofile::SnapshotFile,
+};
 use rustic_testing::backend::in_memory_backend::InMemoryBackend;
 
 use super::{TestSource, tar_gz_testdata};

@@ -5,11 +5,18 @@ use derive_setters::Setters;
 use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
-use crate::{Destination, ReadFileOpen, ReadSourceEntry, WriteFileOpen, WriteHandle, backend::{
-    FileType, ReadBackend,
-    decrypt::DecryptReadBackend,
-    node::{Node, NodeType},
-}, blob::{BlobLocation, BlobLocations}, error::{ErrorKind, RusticError, RusticResult}, repofile::packfile::PackId, repository::{IndexedFull, IndexedTree, Open, Repository}, CancelToken};
+use crate::{
+    CancelToken, Destination, ReadFileOpen, ReadSourceEntry, WriteFileOpen, WriteHandle,
+    backend::{
+        FileType, ReadBackend,
+        decrypt::DecryptReadBackend,
+        node::{Node, NodeType},
+    },
+    blob::{BlobLocation, BlobLocations},
+    error::{ErrorKind, RusticError, RusticResult},
+    repofile::packfile::PackId,
+    repository::{IndexedFull, IndexedTree, Open, Repository},
+};
 use bytes::Bytes;
 use dashmap::{DashMap, DashSet};
 use itertools::Itertools;
@@ -135,7 +142,13 @@ pub(crate) fn restore_repository<S: IndexedTree>(
 
     token.check()?;
     let p = repo.progress_spinner("setting metadata...");
-    restore_metadata(node_streamer, &file_infos.hardlink_candidates, opts, dest, token)?;
+    restore_metadata(
+        node_streamer,
+        &file_infos.hardlink_candidates,
+        opts,
+        dest,
+        token,
+    )?;
     p.finish();
 
     Ok(())
@@ -193,7 +206,7 @@ where
                 .trim_start_matches("/")
                 .trim_end_matches("/"),
         )
-            .to_path_buf()
+        .to_path_buf()
     };
 
     let next_entry = |walker: &mut W| -> Option<ReadSourceEntry<O>> {
@@ -435,8 +448,8 @@ fn restore_metadata(
                         "Failed to recreate the hardlink `{path}` from `{canonical}`.",
                         err,
                     )
-                        .attach_context("path", path.display().to_string())
-                        .attach_context("canonical", canonical.display().to_string())
+                    .attach_context("path", path.display().to_string())
+                    .attach_context("canonical", canonical.display().to_string())
                 })?;
             }
         }
@@ -606,7 +619,7 @@ fn restore_contents<S: Open>(
                 "Failed to create the thread pool with `{num_threads}` threads. Please try again.",
                 err,
             )
-                .attach_context("num_threads", threads.to_string())
+            .attach_context("num_threads", threads.to_string())
         })?;
 
     pool.in_place_scope(|s| {
@@ -614,11 +627,11 @@ fn restore_contents<S: Open>(
             pack_id,
             from_file,
             locations:
-            BlobLocations {
-                offset,
-                length,
-                blobs,
-            },
+                BlobLocations {
+                    offset,
+                    length,
+                    blobs,
+                },
         } in packs
         {
             if blobs.is_empty() {
@@ -668,7 +681,7 @@ fn restore_contents<S: Open>(
                             &read_data[start..end],
                             bl.uncompressed_length,
                         )
-                            .unwrap()
+                        .unwrap()
                     };
 
                     for (file_idx, start) in name_dests {

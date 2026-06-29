@@ -9,7 +9,11 @@ use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_backend::stdout::CommandSource;
-use rustic_core::{BackupOptions, CommandInput, FilterOptions, Grouped, LsOptions, Metadata, Node, NodeType, ParentOptions, RusticResult, SnapshotGroupCriterion, SnapshotOptions, StringList, repofile::{PackId, SnapshotFile}, CancelToken};
+use rustic_core::{
+    BackupOptions, CancelToken, CommandInput, FilterOptions, Grouped, LsOptions, Metadata, Node,
+    NodeType, ParentOptions, RusticResult, SnapshotGroupCriterion, SnapshotOptions, StringList,
+    repofile::{PackId, SnapshotFile},
+};
 
 use super::{
     RepoOpen, TestSource, assert_with_win, insta_node_redaction, insta_snapshotfile_redaction,

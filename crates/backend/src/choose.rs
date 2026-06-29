@@ -10,12 +10,11 @@ use rustic_core::{
 use crate::util::{BackendLocation, location_to_type_and_path};
 
 use crate::local::LocalRepo;
+use crate::opendal::OpenDALRepo;
 use crate::rclone::RcloneRepo;
 use crate::rest::RestRepo;
 #[cfg(feature = "clap")]
 use clap::ValueHint;
-use opendal_ext::config::OpenDALConfig;
-use crate::opendal::OpenDALRepo;
 
 /// Options for a backend.
 #[cfg_attr(feature = "clap", derive(clap::Parser))]

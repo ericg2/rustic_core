@@ -19,12 +19,23 @@ use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use thiserror::Error;
 use zstd::stream::decode_all;
 
-use crate::{DataId, ErrorKind, RusticError, TreeId, backend::{FileType, ReadBackend, cache::Cache, decrypt::DecryptReadBackend, node::NodeType}, blob::{BlobId, BlobType, tree::TreeStreamerOnce}, crypto::hasher::hash, error::RusticResult, id::Id, index::{
-    GlobalIndex, ReadGlobalIndex,
-    binarysorted::{IndexCollector, IndexType},
-}, progress::Progress, repofile::{
-    IndexFile, IndexPack, PackHeader, PackHeaderLength, PackHeaderRef, packfile::PackId,
-}, repository::{Open, Repository}, CancelToken};
+use crate::{
+    CancelToken, DataId, ErrorKind, RusticError, TreeId,
+    backend::{FileType, ReadBackend, cache::Cache, decrypt::DecryptReadBackend, node::NodeType},
+    blob::{BlobId, BlobType, tree::TreeStreamerOnce},
+    crypto::hasher::hash,
+    error::RusticResult,
+    id::Id,
+    index::{
+        GlobalIndex, ReadGlobalIndex,
+        binarysorted::{IndexCollector, IndexType},
+    },
+    progress::Progress,
+    repofile::{
+        IndexFile, IndexPack, PackHeader, PackHeaderLength, PackHeaderRef, packfile::PackId,
+    },
+    repository::{Open, Repository},
+};
 
 #[derive(Clone, Copy, Debug, Default)]
 #[non_exhaustive]

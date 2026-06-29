@@ -18,49 +18,62 @@ use jiff::SignedDuration;
 use log::info;
 use serde_with::{DisplayFromStr, serde_as};
 
-use crate::{DestinationBuilder, ReadSource, ReadSourceBuilder, RepositoryBackends, RusticError, backend::{
-    FileType, FindInBackend, ReadBackend, WriteBackend,
-    cache::{Cache, CachedBackend},
-    decrypt::{DecryptBackend, DecryptReadBackend, DecryptWriteBackend},
-    dest::Destination,
-    hotcold::HotColdBackend,
-    node::Node,
-    warm_up::WarmUpAccessBackend,
-}, blob::{
-    BlobId, BlobType, PackedId,
-    tree::{
-        FindMatches, FindNode, NodeStreamer, TreeId, TreeStreamerOptions as LsOptions,
-        rewrite::RewriteTreesOptions,
+use crate::{
+    CancelToken, DestinationBuilder, ReadSource, ReadSourceBuilder, RepositoryBackends,
+    RusticError,
+    backend::{
+        FileType, FindInBackend, ReadBackend, WriteBackend,
+        cache::{Cache, CachedBackend},
+        decrypt::{DecryptBackend, DecryptReadBackend, DecryptWriteBackend},
+        dest::Destination,
+        hotcold::HotColdBackend,
+        node::Node,
+        warm_up::WarmUpAccessBackend,
     },
-}, commands::{
-    self,
-    backup::BackupOptions,
-    check::{CheckOptions, CheckResults, check_repository},
-    config::{ConfigOptions, save_config_hot},
-    copy::CopySnapshot,
-    key::{KeyOptions, add_current_key_to_repo},
-    prune::{PruneOptions, PrunePlan, prune_repository},
-    repair::{
-        hotcold::{repair_hotcold, repair_hotcold_packs},
-        index::{RepairIndexOptions, index_checked_from_collector, repair_index},
-        snapshots::{RepairSnapshotsOptions, repair_snapshots},
+    blob::{
+        BlobId, BlobType, PackedId,
+        tree::{
+            FindMatches, FindNode, NodeStreamer, TreeId, TreeStreamerOptions as LsOptions,
+            rewrite::RewriteTreesOptions,
+        },
     },
-    repoinfo::{IndexInfos, RepoFileInfos},
-    restore::{RestoreOptions, RestorePlan, collect_and_prepare, restore_repository},
-    rewrite::{RewriteOptions, rewrite_snapshots, rewrite_snapshots_and_trees},
-}, crypto::aespoly1305::Key, error::{ErrorKind, RusticResult}, index::{
-    GlobalIndex, IndexEntry, ReadGlobalIndex, ReadIndex,
-    binarysorted::{IndexCollector, IndexType},
-}, progress::{HiddenProgress, NoProgressBars, Progress, ProgressBars, ProgressType}, repofile::{
-    ConfigFile, KeyId, PathList, RepoFile, RepoId, SnapshotFile, SnapshotSummary, Tree,
-    configfile::ConfigId,
-    keyfile::{MasterKey, find_key_in_backend},
-    snapshotfile::SnapshotId,
-}, repository::{
-    command_input::CommandInput,
-    credentials::Credentials,
-    warm_up::{warm_up, warm_up_wait},
-}, vfs::OpenFile, CancelToken};
+    commands::{
+        self,
+        backup::BackupOptions,
+        check::{CheckOptions, CheckResults, check_repository},
+        config::{ConfigOptions, save_config_hot},
+        copy::CopySnapshot,
+        key::{KeyOptions, add_current_key_to_repo},
+        prune::{PruneOptions, PrunePlan, prune_repository},
+        repair::{
+            hotcold::{repair_hotcold, repair_hotcold_packs},
+            index::{RepairIndexOptions, index_checked_from_collector, repair_index},
+            snapshots::{RepairSnapshotsOptions, repair_snapshots},
+        },
+        repoinfo::{IndexInfos, RepoFileInfos},
+        restore::{RestoreOptions, RestorePlan, collect_and_prepare, restore_repository},
+        rewrite::{RewriteOptions, rewrite_snapshots, rewrite_snapshots_and_trees},
+    },
+    crypto::aespoly1305::Key,
+    error::{ErrorKind, RusticResult},
+    index::{
+        GlobalIndex, IndexEntry, ReadGlobalIndex, ReadIndex,
+        binarysorted::{IndexCollector, IndexType},
+    },
+    progress::{HiddenProgress, NoProgressBars, Progress, ProgressBars, ProgressType},
+    repofile::{
+        ConfigFile, KeyId, PathList, RepoFile, RepoId, SnapshotFile, SnapshotSummary, Tree,
+        configfile::ConfigId,
+        keyfile::{MasterKey, find_key_in_backend},
+        snapshotfile::SnapshotId,
+    },
+    repository::{
+        command_input::CommandInput,
+        credentials::Credentials,
+        warm_up::{warm_up, warm_up_wait},
+    },
+    vfs::OpenFile,
+};
 
 #[cfg(feature = "clap")]
 use clap::ValueHint;

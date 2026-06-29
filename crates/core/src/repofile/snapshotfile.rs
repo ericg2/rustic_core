@@ -1251,7 +1251,6 @@ impl From<String> for PathList {
     }
 }
 
-
 impl Display for PathList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0

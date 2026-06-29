@@ -6,8 +6,8 @@ pub(crate) mod dry_run;
 pub(crate) mod filters;
 pub(crate) mod hotcold;
 pub(crate) mod node;
-pub(crate) mod warm_up;
 pub(crate) mod token;
+pub(crate) mod warm_up;
 
 use bytes::Bytes;
 use enum_map::Enum;
@@ -17,10 +17,10 @@ use log::trace;
 use mockall::mock;
 
 use crate::{
+    Destination,
     backend::node::{Metadata, Node, NodeType},
     error::RusticResult,
     id::Id,
-    Destination,
 };
 use serde::de::DeserializeOwned;
 use serde_derive::{Deserialize, Serialize};

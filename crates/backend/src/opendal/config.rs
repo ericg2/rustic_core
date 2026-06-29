@@ -1,13 +1,12 @@
-use std::hash::{Hash, Hasher};
-use crate::opendal::{OpenDALBackend};
-use crate::retry::RetrySetting;
+use crate::opendal::OpenDALBackend;
 use derive_setters::Setters;
+use opendal_ext::config::OpenDALConfig;
 use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};
 use serde::{Deserialize, Serialize};
-use serde_with::{DisplayFromStr, serde_as};
+use serde_with::serde_as;
 use std::collections::HashMap;
+use std::hash::Hasher;
 use std::sync::Arc;
-use opendal_ext::config::OpenDALConfig;
 
 #[serde_as]
 #[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
@@ -17,7 +16,7 @@ use opendal_ext::config::OpenDALConfig;
 /// An OpenDAL repository.
 pub struct OpenDALRepo {
     /// The config to use.
-    pub config: OpenDALConfig
+    pub config: OpenDALConfig,
 }
 
 impl OpenDALRepo {
@@ -31,10 +30,10 @@ impl OpenDALRepo {
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<String>,
-        V: Into<String>
+        V: Into<String>,
     {
         Self {
-            config: OpenDALConfig::from_iter(scheme, dict)
+            config: OpenDALConfig::from_iter(scheme, dict),
         }
     }
 }

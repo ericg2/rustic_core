@@ -11,7 +11,6 @@ use tokio::runtime::Runtime;
 use typed_path::UnixPathBuf;
 
 use crate::opendal::OpenDALSource;
-use crate::opendal::config::*;
 use crate::opendal::log::OpenLogLayer;
 use crate::opendal::source::OpenDALReader;
 use rustic_core::{
