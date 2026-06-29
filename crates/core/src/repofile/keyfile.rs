@@ -305,7 +305,7 @@ fn log_2(x: u32) -> KeyFileResult<u8> {
 ///
 /// This is used to verify the integrity of the key
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Mac {
     /// The key used for the mac
     #[serde_as(as = "Base64")]
@@ -320,7 +320,7 @@ pub struct Mac {
 ///
 /// This is used to encrypt the key
 #[serde_as]
-#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct MasterKey {
     /// The mac of the key
     pub mac: Mac,
