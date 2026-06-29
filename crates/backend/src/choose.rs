@@ -19,7 +19,7 @@ use clap::ValueHint;
 /// Options for a backend.
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 #[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Default, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Default, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq, Hash)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 #[non_exhaustive]
 pub struct BackendOptions {

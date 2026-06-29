@@ -90,7 +90,7 @@ mod constants {
 #[serde_as]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 #[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Setters)]
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Setters, Eq, PartialEq, Hash)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 #[setters(into, strip_option)]
 #[non_exhaustive]

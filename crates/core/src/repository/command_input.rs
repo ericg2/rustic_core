@@ -65,7 +65,7 @@ pub(crate) type CommandInputResult<T> = Result<T, CommandInputErrorKind>;
 /// A command to be called which can be given as CLI option as well as in config files
 /// `CommandInput` implements Serialize/Deserialize as well as `FromStr`.
 #[serde_as]
-#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize, Hash)]
 pub struct CommandInput(
     // Note: we use _CommandInput here which itself impls FromStr in order to use serde_as PickFirst for CommandInput.
     //#[serde(
@@ -264,7 +264,7 @@ impl Display for CommandInput {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(default, rename_all = "kebab-case")]
 struct _CommandInput {
     command: String,
@@ -308,7 +308,7 @@ impl Display for _CommandInput {
 }
 
 /// Error handling for commands called as `CommandInput`
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum OnFailure {
     /// errors in command calling will result in rustic errors
