@@ -1,11 +1,9 @@
 use bytes::Bytes;
 use log::{error, trace};
-use opendal::{
-    Builder,
-    blocking::Operator,
-    layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer},
-    options::ReadOptions,
-};
+use opendal_ext::blocking::Operator;
+use opendal_ext::config::OpenDALConfig;
+use opendal_ext::layers::LoggingLayer;
+use opendal_ext::options::ReadOptions;
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -53,28 +51,17 @@ pub struct OpenDALBackend {
 
 impl OpenDALBackend {
     pub(crate) fn new(config: &OpenDALConfig) -> RusticResult<Self> {
-        let mut operator = config.scheme().operator().map_err(|err| {
-            RusticError::with_source(
-                ErrorKind::Backend,
-                "Creating Operator from path failed. Please check the given schema and options.",
-                err,
-            )
-        })?;
+        let op = config
+            .operator()
+            .map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::Backend,
+                    "Creating blocking Operator from path failed.",
+                    err,
+                )
+            })?
+            .layer(LoggingLayer::new(OpenLogLayer));
 
-        // TODO: add the extra retry options using ExponentialBackoff.
-        let retry = config.retry.get_setting(constants::DEFAULT_RETRY as usize);
-        operator = operator.layer(RetryLayer::new().with_max_times(retry).with_jitter());
-        operator = operator.layer(LoggingLayer::new(OpenLogLayer));
-
-        if let Some(x) = config.connections {
-            operator = operator.layer(ConcurrentLimitLayer::new(x as usize));
-        }
-
-        if let Some(ref x) = config.throttle {
-            operator = operator.layer(ThrottleLayer::new(x.bandwidth, x.burst));
-        }
-
-        let op = operator.layer(LoggingLayer::new(OpenLogLayer));
         let operator = if tokio::runtime::Handle::try_current().is_ok() {
             // Async context: block_in_place yields the thread to Tokio safely
             tokio::task::block_in_place(|| Operator::new(op))
@@ -152,7 +139,7 @@ impl ReadBackend for OpenDALBackend {
         if tpe == FileType::Config {
             return match self.operator.stat("config") {
                 Ok(meta) => Ok(vec![(Id::default(), length(meta.content_length(), "config", tpe).unwrap_or_default())]),
-                Err(err) if err.kind() == opendal::ErrorKind::NotFound => Ok(Vec::new()),
+                Err(err) if err.kind() == opendal_ext::ErrorKind::NotFound => Ok(Vec::new()),
                 Err(err) => Err(err).map_err(|err|
                     RusticError::with_source(
                         ErrorKind::Backend,

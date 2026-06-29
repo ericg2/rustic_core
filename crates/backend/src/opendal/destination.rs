@@ -1,8 +1,7 @@
 use crate::opendal::source::{OpenDALFile, OpenDALReader};
-use crate::opendal::{OpenDALBackend, OpenDALConfig, OpenDALSource};
+use crate::opendal::{OpenDALBackend, OpenDALSource};
 use crate::path_to_str;
 use derive_setters::Setters;
-use opendal::options::{DeleteOptions, WriteOptions};
 use rustic_core::{
     Destination, DestinationBuilder, ErrorKind, Metadata, Node, ReadSourceBuilder, RestoreOptions,
     RusticError, RusticResult,
@@ -11,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use opendal_ext::config::OpenDALConfig;
+use opendal_ext::options::{DeleteOptions, WriteOptions};
 
 /// OpenDAL destination, used when restoring.
 #[serde_as]
@@ -167,7 +168,7 @@ impl Destination for OpenDALWriter {
         let path = path_to_str(&self.root, path, false);
         let meta = match self.be.operator.stat(&path) {
             Ok(meta) => meta,
-            Err(err) if err.kind() == opendal::ErrorKind::NotFound => return Ok(None),
+            Err(err) if err.kind() == opendal_ext::ErrorKind::NotFound => return Ok(None),
             Err(err) => {
                 return Err(RusticError::with_source(
                     ErrorKind::Backend,

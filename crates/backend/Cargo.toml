@@ -35,7 +35,7 @@ cli = ["merge", "clap"]
 merge = ["dep:conflate"]
 clap = ["dep:clap"]
 opendal = [
-    "dep:opendal",
+    "dep:opendal-ext",
     "dep:rayon",
     "dep:tokio",
     "tokio/rt-multi-thread",
@@ -105,7 +105,8 @@ xattr = "1"
 [target.'cfg(not(windows))'.dependencies]
 # opendal backend
 # - sftp is not supported on windows, see https://github.com/apache/incubator-opendal/issues/2963
-opendal = {
+opendal-ext = {
+    git = "https://www.github.com/ericg2/opendal-ext.git",
     version = "0.57.0",
     features = [
         "blocking",
@@ -133,14 +134,14 @@ opendal = {
         "services-webhdfs",
         "services-azfile",
         "services-yandex-disk",
-        "layers-throttle",
     ],
     optional = true
 }
 
 [target.'cfg(windows)'.dependencies]
 # opendal backend
-opendal = {
+opendal-ext = {
+    git = "https://www.github.com/ericg2/opendal-ext.git",
     version = "0.57.0",
     features = [
         "blocking",
@@ -166,7 +167,6 @@ opendal = {
         "services-webdav",
         "services-webhdfs",
         "services-azfile",
-        "layers-throttle",
         "services-yandex-disk"
     ],
     optional = true
@@ -175,18 +175,18 @@ opendal = {
 [dev-dependencies]
 anyhow = { workspace = true }
 rstest = { workspace = true }
-flate2 = "1.1.9"
-globset = "0.4.18"
-insta = { version = "1.46.3", features = ["redactions", "ron"] }
-mockall = "0.14"
-pretty_assertions = "1.4.1"
-proptest = { version = "1.10.0", default-features = false, features = ["std"] }
+flate2 = "1"
+globset = "0.4"
+insta = { version = "1.48", features = ["redactions", "ron"] }
+mockall = "0.15"
+pretty_assertions = "1.4"
+proptest = { version = "1.10", default-features = false, features = ["std"] }
 # We need to have rustic_backend here, because the doc-tests in lib.rs of rustic_core
 rustic_backend = { workspace = true }
 rustic_testing = { workspace = true }
-tar = "0.4.44"
+tar = "0.4"
 tempfile = { workspace = true }
-toml = "1.0.3"
+toml = "1"
 
 [lints]
 workspace = true

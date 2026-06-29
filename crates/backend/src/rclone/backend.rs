@@ -1,4 +1,4 @@
-use crate::rest::{RestBackend, RestConfig};
+use crate::rest::{RestBackend, RestRepo};
 use bytes::Bytes;
 use constants::DEFAULT_COMMAND;
 use log::{debug, info, warn};
@@ -14,7 +14,7 @@ use std::{
 };
 use url::Url;
 
-use crate::rclone::RcloneConfig;
+use crate::rclone::RcloneRepo;
 use rustic_core::{
     CommandInput, ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult, WriteBackend,
 };
@@ -146,7 +146,7 @@ impl RcloneBackend {
     /// * If the rclone command is not found.
     // TODO: This should be an error, not a panic.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn new(config: &RcloneConfig) -> RusticResult<Self> {
+    pub(crate) fn new(config: &RcloneRepo) -> RusticResult<Self> {
         let url = config.url.clone().ok_or(RusticError::new(
             ErrorKind::Configuration,
             "URL is invalid or does not exist",
@@ -279,7 +279,7 @@ impl RcloneBackend {
             RusticError::with_source(ErrorKind::InputOutput, "URL is not valid", err)
         })?;
 
-        let rest_config = RestConfig::new(&rest_url);
+        let rest_config = RestRepo::new(&rest_url);
         let rest_be = RestBackend::new(&rest_config)?;
         let handle = Some(std::thread::spawn(move || {
             loop {

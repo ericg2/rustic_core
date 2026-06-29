@@ -40,7 +40,7 @@ fn read_file_contents(log_name: &'static str, path: impl AsRef<Path>) -> RusticR
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
-pub struct RestConfig {
+pub struct RestRepo {
     /// The [`Url`] of the REST backend.
     pub url: Option<String>,
 
@@ -87,8 +87,8 @@ pub struct RestConfig {
     pub tls_client_cert: Option<String>,
 }
 
-impl RestConfig {
-    /// Creates a new [`RestConfig`] with the given URI.
+impl RestRepo {
+    /// Creates a new [`RestRepo`] with the given URI.
     pub fn new(url: impl AsRef<str>) -> Self {
         Self {
             url: Some(url.as_ref().to_string()),
@@ -104,10 +104,10 @@ impl RestConfig {
         }
     }
 
-    /// Creates a [`RestConfig`] from an iterator.
+    /// Creates a [`RestRepo`] from an iterator.
     ///
     /// # Important
-    /// This does not guarantee the [`RestConfig`] is initialized correctly. Due to the
+    /// This does not guarantee the [`RestRepo`] is initialized correctly. Due to the
     /// nature of dynamic types - this feature is only a convenience. All invalid fields will
     /// be skipped, and will not return an error during this process.
     pub fn from_iter<K, V, I>(url: impl AsRef<str>, dict: I) -> Self
@@ -211,7 +211,7 @@ impl RestConfig {
     }
 }
 
-impl RepositoryConfig for RestConfig {
+impl RepositoryConfig for RestRepo {
     fn get_path(&self) -> Option<String> {
         self.url.clone().map(|x| format!("rest:{}", &x))
     }

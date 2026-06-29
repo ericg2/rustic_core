@@ -1,10 +1,7 @@
 use crate::filter::ExcludeFilter;
-use crate::opendal::{OpenDALBackend, OpenDALConfig};
+use crate::opendal::{OpenDALBackend};
 
 use log::warn;
-use opendal::Entry;
-use opendal::blocking::{StdReader, StdWriter};
-use opendal::options::{ListOptions, WriteOptions};
 
 use rustic_core::{
     ErrorKind, Excludes, Node, NodeType, PathList, ReadFileOpen, ReadSource, ReadSourceBuilder,
@@ -19,6 +16,10 @@ use std::fmt::{Debug, Formatter};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
+use opendal_ext::blocking::{StdReader, StdWriter};
+use opendal_ext::config::OpenDALConfig;
+use opendal_ext::Entry;
+use opendal_ext::options::{ListOptions, WriteOptions};
 
 #[serde_as]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Setters, Default)]
@@ -171,7 +172,7 @@ impl OpenDALReader {
         let meta = rustic_core::repofile::Metadata {
             mtime: metadata
                 .last_modified()
-                .map(opendal::raw::Timestamp::into_inner),
+                .map(opendal_ext::raw::Timestamp::into_inner),
             size: metadata.content_length(),
             ..Default::default()
         };

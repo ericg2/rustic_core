@@ -13,7 +13,7 @@ use std::sync::Arc;
 #[setters(into)]
 #[non_exhaustive]
 /// A local [`Repository`].
-pub struct LocalConfig {
+pub struct LocalRepo {
     /// The base path of the backend.
     pub path: Option<PathBuf>,
     /// The command to call after a file was created.
@@ -22,8 +22,8 @@ pub struct LocalConfig {
     pub post_delete_command: Option<String>,
 }
 
-impl LocalConfig {
-    /// Creates a new [`LocalConfig`] with the given [`Path`].
+impl LocalRepo {
+    /// Creates a new [`LocalRepo`] with the given [`Path`].
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             path: Some(path.as_ref().to_path_buf()),
@@ -32,10 +32,10 @@ impl LocalConfig {
         }
     }
 
-    /// Creates an [`LocalConfig`] from an iterator.
+    /// Creates an [`LocalRepo`] from an iterator.
     ///
     /// # Important
-    /// This does not guarantee the [`LocalConfig`] is initialized correctly. Due to the
+    /// This does not guarantee the [`LocalRepo`] is initialized correctly. Due to the
     /// nature of dynamic types - this feature is only a convenience. All invalid fields will
     /// be skipped, and will not return an error during this process.
     pub fn from_iter<K, V, I>(path: impl AsRef<str>, dict: I) -> Self
@@ -57,7 +57,7 @@ impl LocalConfig {
     }
 }
 
-impl RepositoryConfig for LocalConfig {
+impl RepositoryConfig for LocalRepo {
     fn get_path(&self) -> Option<String> {
         self.path.clone().map(|x| x.to_string_lossy().to_string())
     }

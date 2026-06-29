@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[setters(into)]
 #[non_exhaustive]
 /// A repository using Rclone.
-pub struct RcloneConfig {
+pub struct RcloneRepo {
     /// The URL to use.
     pub url: Option<String>,
 
@@ -27,8 +27,8 @@ pub struct RcloneConfig {
     pub rest_url: Option<String>,
 }
 
-impl RcloneConfig {
-    /// Creates a new [`RcloneConfig`] with the given URL.
+impl RcloneRepo {
+    /// Creates a new [`RcloneRepo`] with the given URL.
     pub fn new(url: impl AsRef<str>) -> Self {
         Self {
             url: Some(url.as_ref().to_string()),
@@ -38,10 +38,10 @@ impl RcloneConfig {
         }
     }
 
-    /// Creates a [`RcloneConfig`] from an iterator.
+    /// Creates a [`RcloneRepo`] from an iterator.
     ///
     /// # Important
-    /// This does not guarantee the [`RcloneConfig`] is initialized correctly. Due to the
+    /// This does not guarantee the [`RcloneRepo`] is initialized correctly. Due to the
     /// nature of dynamic types - this feature is only a convenience. All invalid fields will
     /// be skipped, and will not return an error during this process.
     pub fn from_iter<K, V, I>(url: impl AsRef<str>, dict: I) -> Self
@@ -73,7 +73,7 @@ impl RcloneConfig {
     }
 }
 
-impl RepositoryConfig for RcloneConfig {
+impl RepositoryConfig for RcloneRepo {
     fn get_path(&self) -> Option<String> {
         self.url.clone().map(|x| format!("rclone:{}", &x))
     }

@@ -9,12 +9,13 @@ use rustic_core::{
 
 use crate::util::{BackendLocation, location_to_type_and_path};
 
-use crate::local::LocalConfig;
-use crate::opendal::OpenDALConfig;
-use crate::rclone::RcloneConfig;
-use crate::rest::RestConfig;
+use crate::local::LocalRepo;
+use crate::rclone::RcloneRepo;
+use crate::rest::RestRepo;
 #[cfg(feature = "clap")]
 use clap::ValueHint;
+use opendal_ext::config::OpenDALConfig;
+use crate::opendal::OpenDALRepo;
 
 /// Options for a backend.
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
@@ -251,13 +252,13 @@ impl SupportedBackend {
     ) -> RusticResult<Arc<dyn RepositoryConfig>> {
         let options = options.unwrap_or_default();
         Ok(match self {
-            Self::Local => Arc::new(LocalConfig::from_iter(location, options)),
+            Self::Local => Arc::new(LocalRepo::from_iter(location, options)),
             #[cfg(feature = "rclone")]
-            Self::Rclone => Arc::new(RcloneConfig::from_iter(location, options)),
+            Self::Rclone => Arc::new(RcloneRepo::from_iter(location, options)),
             #[cfg(feature = "rest")]
-            Self::Rest => Arc::new(RestConfig::from_iter(location, options)),
+            Self::Rest => Arc::new(RestRepo::from_iter(location, options)),
             #[cfg(feature = "opendal")]
-            Self::OpenDAL => Arc::new(OpenDALConfig::from_iter(location, options)),
+            Self::OpenDAL => Arc::new(OpenDALRepo::from_iter(location, options)),
         })
     }
 }

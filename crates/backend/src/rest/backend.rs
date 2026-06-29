@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::time::Duration;
 
-use crate::rest::config::RestConfig;
+use crate::rest::config::RestRepo;
 use backon::{BlockingRetryable, ExponentialBuilder};
 use bytes::Bytes;
 use jiff::SignedDuration;
@@ -94,7 +94,7 @@ impl RestBackend {
     ///
     /// * If the url could not be parsed.
     /// * If the client could not be built.
-    pub(crate) fn new(config: &RestConfig) -> RusticResult<Self> {
+    pub(crate) fn new(config: &RestRepo) -> RusticResult<Self> {
         let url = config
             .url
             .clone()

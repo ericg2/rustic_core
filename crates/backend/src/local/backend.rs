@@ -10,7 +10,7 @@ use std::{
 };
 use walkdir::WalkDir;
 
-use crate::local::config::LocalConfig;
+use crate::local::config::LocalRepo;
 use rustic_core::{
     ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult,
     WriteBackend,
@@ -22,11 +22,11 @@ pub struct LocalBackend {
     /// The base path of the backend.
     path: PathBuf,
     /// The config for this backend.
-    config: LocalConfig,
+    config: LocalRepo,
 }
 
 impl LocalBackend {
-    pub(crate) fn new(path: PathBuf, config: LocalConfig) -> Self {
+    pub(crate) fn new(path: PathBuf, config: LocalRepo) -> Self {
         Self { path, config }
     }
 

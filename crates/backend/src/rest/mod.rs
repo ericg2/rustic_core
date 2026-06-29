@@ -1,6 +1,6 @@
 mod backend;
 mod config;
 
-pub use config::RestConfig;
+pub use config::RestRepo;
 
 pub(crate) use backend::RestBackend;
