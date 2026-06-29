@@ -1,6 +1,6 @@
 //! `backup` example
 use rustic_backend::local::{LocalRepo, LocalSource};
-use rustic_backend::BackendOptions;
+use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_core::{
     BackupOptions, CancelToken, Credentials, PathList, Repository, RepositoryOptions,
     SnapshotOptions,

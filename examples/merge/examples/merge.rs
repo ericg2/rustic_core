@@ -1,5 +1,5 @@
 //! `merge` example
-use rustic_backend::BackendOptions;
+use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_core::{
     last_modified_node, repofile::SnapshotFile, Credentials, Repository, RepositoryOptions,
 };

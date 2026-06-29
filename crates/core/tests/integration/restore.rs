@@ -2,7 +2,7 @@
 use std::os::unix::fs::MetadataExt;
 
 use anyhow::Result;
-use rustic_backend::BackendOptions;
+use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_backend::local::{LocalDestination, LocalSource};
 use rustic_core::{
     BackupOptions, CancelToken, ConfigOptions, Credentials, KeyOptions, LsOptions, Repository,

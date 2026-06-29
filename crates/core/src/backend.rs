@@ -8,6 +8,7 @@ pub(crate) mod hotcold;
 pub(crate) mod node;
 pub(crate) mod token;
 pub(crate) mod warm_up;
+pub(crate) mod choose;
 
 use bytes::Bytes;
 use enum_map::Enum;

@@ -1,5 +1,5 @@
 //! `init` example
-use rustic_backend::BackendOptions;
+use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_core::{
     repofile::MasterKey, ConfigOptions, Credentials, KeyOptions, Repository, RepositoryOptions,
 };

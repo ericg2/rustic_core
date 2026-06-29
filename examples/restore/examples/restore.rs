@@ -1,6 +1,6 @@
 //! `restore` example
 use rustic_backend::local::LocalDestination;
-use rustic_backend::BackendOptions;
+use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_core::{
     CancelToken, Credentials, LsOptions, Repository, RepositoryOptions, RestoreOptions,
 };

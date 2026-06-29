@@ -3,9 +3,7 @@ use std::fmt::Debug;
 use std::{collections::BTreeMap, sync::Arc};
 use strum::{Display, EnumString};
 
-use rustic_core::{
-    ErrorKind, RepositoryBackends, RepositoryConfig, RusticError, RusticResult, WriteBackend,
-};
+use rustic_core::{BackendOptions, ErrorKind, RepositoryBackends, RepositoryConfig, RusticError, RusticResult, WriteBackend};
 
 use crate::util::{BackendLocation, location_to_type_and_path};
 
@@ -16,134 +14,15 @@ use crate::rest::RestRepo;
 #[cfg(feature = "clap")]
 use clap::ValueHint;
 
-/// Options for a backend.
-#[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Default, Debug, serde::Deserialize, serde::Serialize, Eq, PartialEq, Hash)]
-#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
-#[non_exhaustive]
-pub struct BackendOptions {
-    /// Repository to use
-    #[cfg_attr(
-        feature = "clap",
-        clap(short, long, global = true, visible_alias = "repo", env = "RUSTIC_REPOSITORY", value_hint = ValueHint::DirPath)
-    )]
-    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
-    pub repository: Option<String>,
-
-    /// Repository to use as hot storage
-    #[cfg_attr(
-        feature = "clap",
-        clap(long, global = true, alias = "repository_hot", env = "RUSTIC_REPO_HOT")
-    )]
-    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
-    pub repo_hot: Option<String>,
-
-    /// Other options for this repository (hot and cold part)
-    #[cfg_attr(feature = "clap", clap(skip))]
-    #[cfg_attr(feature = "merge", merge(strategy = conflate::btreemap::append_or_ignore))]
-    pub options: BTreeMap<String, String>,
-
-    /// Other options for the hot repository
-    #[cfg_attr(feature = "clap", clap(skip))]
-    #[cfg_attr(feature = "merge", merge(strategy = conflate::btreemap::append_or_ignore))]
-    pub options_hot: BTreeMap<String, String>,
-
-    /// Other options for the cold repository
-    #[cfg_attr(feature = "clap", clap(skip))]
-    #[cfg_attr(feature = "merge", merge(strategy = conflate::btreemap::append_or_ignore))]
-    pub options_cold: BTreeMap<String, String>,
+pub trait BackendBuilder: Send + Sync + 'static {
+    fn to_backends(&self) -> RusticResult<RepositoryBackends>;
 }
 
-impl BackendOptions {
-    /// Adds a [`Repository`] using dynamic types.
-    pub fn repository(mut self, repo: impl Into<String>) -> Self {
-        self.repository = Some(repo.into());
-        self
-    }
-
-    /// Adds a hot [`Repository`] using dynamic types.
-    pub fn repo_hot(mut self, repo: impl Into<String>) -> Self {
-        self.repo_hot = Some(repo.into());
-        self
-    }
-
-    /// Adds a [`Repository`] using a typed config.
-    ///
-    /// # Important
-    /// This will automatically set the configuration. Do not use `options`.
-    pub fn with_repo(mut self, repo: &impl RepositoryConfig) -> Self {
-        self.repository = repo.get_path();
-        self.options_cold = repo.get_options().into_iter().collect();
-        self
-    }
-
-    /// Adds a hot [`Repository`] using a typed config.
-    ///
-    /// # Important
-    /// This will automatically set the configuration. Do not use `options`.
-    pub fn with_repo_hot(mut self, repo: &impl RepositoryConfig) -> Self {
-        self.repository = repo.get_path();
-        self.options_hot = repo.get_options().into_iter().collect();
-        self
-    }
-
-    /// Sets the options for all repositories.
-    pub fn options<K, V, I>(mut self, dict: I) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
-    {
-        self.options = dict
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-        self
-    }
-
-    /// Sets the options for the hot repository.
-    pub fn options_hot<K, V, I>(mut self, dict: I) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
-    {
-        self.options_hot = dict
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-        self
-    }
-
-    /// Sets the options for the cold repository.
-    pub fn options_cold<K, V, I>(mut self, dict: I) -> Self
-    where
-        I: IntoIterator<Item = (K, V)>,
-        K: Into<String>,
-        V: Into<String>,
-    {
-        self.options_cold = dict
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-        self
-    }
-
-    /// Convert the options to backends.
-    ///
-    /// # Errors
-    ///
-    /// If the repository is not given, an error is returned.
-    ///
-    /// # Returns
-    ///
-    /// The backends for the repository.
-    pub fn to_backends(&self) -> RusticResult<RepositoryBackends> {
+impl BackendBuilder for BackendOptions {
+    fn to_backends(&self) -> RusticResult<RepositoryBackends> {
         let mut options = self.options.clone();
         options.extend(self.options_cold.clone());
-        let be = self
-            .get_backend(self.repository.as_ref(), options)?
+        let be = get_backend(self.repository.as_ref(), options)?
             .ok_or_else(|| {
                 RusticError::new(
                     ErrorKind::Backend,
@@ -152,46 +31,28 @@ impl BackendOptions {
             })?;
         let mut options = self.options.clone();
         options.extend(self.options_hot.clone());
-        let be_hot = self.get_backend(self.repo_hot.as_ref(), options)?;
-
+        let be_hot = get_backend(self.repo_hot.as_ref(), options)?;
         Ok(RepositoryBackends::new(be, be_hot))
     }
+}
 
-    /// Get the backend for the given repository.
-    ///
-    /// # Arguments
-    ///
-    /// * `repo_string` - The repository string to use.
-    /// * `options` - Additional options for the backend.
-    ///
-    /// # Errors
-    ///
-    /// * If the backend cannot be loaded, an error is returned.
-    ///
-    /// # Returns
-    ///
-    /// The backend for the given repository.
-    // Allow unused_self, as we want to access this method
-    #[allow(clippy::unused_self)]
-    fn get_backend(
-        &self,
-        repo_string: Option<&String>,
-        options: BTreeMap<String, String>,
-    ) -> RusticResult<Option<Arc<dyn WriteBackend>>> {
-        repo_string
-            .map(|string| {
-                let (be_type, location) = location_to_type_and_path(string)?;
-                be_type
-                    .to_backend(location.clone(), options.into())
-                    .map_err(|err| {
-                        err
+fn get_backend(
+    repo_string: Option<&String>,
+    options: BTreeMap<String, String>,
+) -> RusticResult<Option<Arc<dyn WriteBackend>>> {
+    repo_string
+        .map(|string| {
+            let (be_type, location) = location_to_type_and_path(string)?;
+            be_type
+                .to_backend(location.clone(), options.into())
+                .map_err(|err| {
+                    err
                         .prepend_guidance_line("Could not load the backend `{name}` at `{location}`. Please check the given backend and try again.")
                         .attach_context("name", be_type.to_string())
                         .attach_context("location", location.to_string())
-                    })
-            })
-            .transpose()
-    }
+                })
+        })
+        .transpose()
 }
 
 /// Trait which can be implemented to choose a backend from a backend type, a backend path and options given as `HashMap`.

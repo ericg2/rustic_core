@@ -81,10 +81,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 // rustic_backend Public API
-pub use crate::choose::{BackendOptions, SupportedBackend};
+pub use crate::choose::{SupportedBackend, BackendBuilder};
 
-// re-export for error handling
-pub use rustic_core::{ErrorKind, RusticError, RusticResult, Severity, Status};
+// re-export for error handling and backwards compatibility.
+pub use rustic_core::{ErrorKind, RusticError, RusticResult, Severity, Status, BackendOptions};
 
 pub(crate) fn normalize_value<V: Into<String>>(v: V) -> Value {
     match v.into().as_str() {

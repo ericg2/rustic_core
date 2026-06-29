@@ -1,6 +1,6 @@
 //! `forget` example
 use jiff::Zoned;
-use rustic_backend::BackendOptions;
+use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_core::{
     Credentials, ForgetGroups, Grouped, KeepOptions, Repository, RepositoryOptions,
     SnapshotGroupCriterion,
