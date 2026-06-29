@@ -1,7 +1,7 @@
 //! `restore` example
 use rustic_backend::local::LocalDestination;
 use rustic_backend::BackendOptions;
-use rustic_core::{Credentials, LsOptions, Repository, RepositoryOptions, RestoreOptions};
+use rustic_core::{CancelToken, Credentials, LsOptions, Repository, RepositoryOptions, RestoreOptions};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
 
@@ -33,8 +33,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let dry_run = false;
 
     // create restore infos. Note: this also already creates needed dirs in the destination
-    let restore_infos = repo.prepare_restore(&opts, ls.clone(), &dest, dry_run)?;
+    let restore_infos = repo.prepare_restore(&opts, ls.clone(), &dest, dry_run, CancelToken::new())?;
 
-    repo.restore(restore_infos, &opts, ls, &dest)?;
+    repo.restore(restore_infos, &opts, ls, &dest, CancelToken::new())?;
     Ok(())
 }

@@ -4,10 +4,7 @@ use anyhow::Result;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{
-    BackupOptions, CheckOptions, ConfigOptions, Credentials, FileType, KeyOptions, ReadBackend,
-    Repository, RepositoryBackends, RepositoryOptions, WriteBackend, repofile::SnapshotFile,
-};
+use rustic_core::{BackupOptions, CheckOptions, ConfigOptions, Credentials, FileType, KeyOptions, ReadBackend, Repository, RepositoryBackends, RepositoryOptions, WriteBackend, repofile::SnapshotFile, CancelToken};
 use rustic_testing::backend::in_memory_backend::InMemoryBackend;
 
 use super::{TestSource, tar_gz_testdata};
@@ -37,7 +34,7 @@ fn hot_cold(tar_gz_testdata: Result<TestSource>) -> Result<()> {
 
     // backup
     let src = LocalSource::new(paths);
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // get all snapshots and check them
     let all_snapshots = repo.get_all_snapshots()?;

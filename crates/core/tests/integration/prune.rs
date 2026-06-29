@@ -3,10 +3,7 @@ use bytesize::ByteSize;
 use jiff::Span;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{
-    BackupOptions, CheckOptions, ConfigOptions, LimitOption, PathList, PruneOptions,
-    repofile::{Chunker, SnapshotFile},
-};
+use rustic_core::{BackupOptions, CheckOptions, ConfigOptions, LimitOption, PathList, PruneOptions, repofile::{Chunker, SnapshotFile}, CancelToken};
 
 use super::{RepoOpen, TestSource, set_up_repo, tar_gz_testdata};
 
@@ -39,21 +36,21 @@ fn test_prune(
     // first backup
     let paths = PathList::from_iter(Some(source.0.path().join("0/0/9")));
     let src = LocalSource::new(&paths);
-    let snapshot1 = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let snapshot1 = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // second backup
     let paths = PathList::from_iter(Some(source.0.path().join("0/0/9/2")));
     let src = LocalSource::new(&paths);
-    let _ = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let _ = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // third backup
     let paths = PathList::from_iter(Some(source.0.path().join("0/0/9/3")));
     let src = LocalSource::new(&paths);
-    let _ = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let _ = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // drop index
     let repo = repo.drop_index();

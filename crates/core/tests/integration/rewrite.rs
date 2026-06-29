@@ -6,11 +6,7 @@ use jiff::Zoned;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{
-    BackupOptions, Excludes, LsOptions, NodeModification, RewriteOptions, RewriteTreesOptions,
-    RusticResult, StringList,
-    repofile::{Metadata, Node, SnapshotFile, SnapshotModification},
-};
+use rustic_core::{BackupOptions, Excludes, LsOptions, NodeModification, RewriteOptions, RewriteTreesOptions, RusticResult, StringList, repofile::{Metadata, Node, SnapshotFile, SnapshotModification}, CancelToken};
 
 use super::{
     RepoOpen, TestSource, assert_with_win, insta_node_redaction, insta_snapshotfile_redaction,
@@ -37,7 +33,7 @@ fn test_rewrite(
 
     // first backup
     let src = LocalSource::new(paths);
-    let snapshot = repo.backup(&backup_opts, &src, SnapshotFile::default())?;
+    let snapshot = repo.backup(&backup_opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     let modification = SnapshotModification::default()
         .set_label("label".to_string())
@@ -109,7 +105,7 @@ fn test_rewrite(
 
     let excludes = Excludes::default().globs(vec![glob]);
     let src = LocalSource::new(paths).excludes(excludes);
-    let snapshot = repo.backup(&backup_opts, &src, SnapshotFile::default())?;
+    let snapshot = repo.backup(&backup_opts, &src, SnapshotFile::default(), CancelToken::new())?;
     // trees should be identical
     assert_eq!(snapshot.tree, rewrite_snaps[0].tree);
 

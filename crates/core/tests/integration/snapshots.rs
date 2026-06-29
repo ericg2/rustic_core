@@ -12,7 +12,9 @@ use jiff::tz::TimeZone;
 use rstest::{fixture, rstest};
 use rustic_backend::local::LocalSource;
 use rustic_core::repofile::SnapshotFile;
-use rustic_core::{BackupOptions, Grouped, IndexedIdsStatus, Repository, SnapshotGroupCriterion};
+use rustic_core::{
+    BackupOptions, CancelToken, Grouped, IndexedIdsStatus, Repository, SnapshotGroupCriterion,
+};
 
 #[fixture]
 #[once]
@@ -45,6 +47,7 @@ fn repo_and_snapshots() -> (Repository<IndexedIdsStatus>, Vec<SnapshotFile>) {
                     time: snap_ts,
                     ..Default::default()
                 },
+                CancelToken::new(),
             )
             .unwrap();
         snapshot_files.push(snapshot_file);

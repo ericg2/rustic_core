@@ -6,7 +6,7 @@ use insta::Settings;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{BackupOptions, repofile::SnapshotFile, vfs::Vfs};
+use rustic_core::{BackupOptions, repofile::SnapshotFile, vfs::Vfs, CancelToken};
 
 use super::{
     RepoOpen, TestSource, assert_with_win, insta_node_redaction, set_up_repo, tar_gz_testdata,
@@ -26,7 +26,7 @@ fn test_vfs(
     let src = LocalSource::new(paths);
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
     // backup test-data
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // re-read index
     let repo = repo.to_indexed()?;

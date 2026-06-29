@@ -1,9 +1,7 @@
 //! `backup` example
 use rustic_backend::local::{LocalRepo, LocalSource};
 use rustic_backend::BackendOptions;
-use rustic_core::{
-    BackupOptions, Credentials, PathList, Repository, RepositoryOptions, SnapshotOptions,
-};
+use rustic_core::{BackupOptions, CancelToken, Credentials, PathList, Repository, RepositoryOptions, SnapshotOptions};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
 
@@ -13,8 +11,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Initialize Backends
     let backends = BackendOptions::default()
-        .with_repo(LocalRepo::new("/tmp/repo"))
-        .with_repo_hot(LocalRepo::new("/tmp/repo2"))
+        .with_repo(&LocalRepo::new("/tmp/repo"))
+        .with_repo_hot(&LocalRepo::new("/tmp/repo2"))
         .to_backends()?;
 
     // Open repository
@@ -32,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .to_snapshot()?;
 
     // Create snapshot
-    let snap = repo.backup(&backup_opts, &source, snap)?;
+    let snap = repo.backup(&backup_opts, &source, snap, CancelToken::new())?;
 
     println!("successfully created snapshot:\n{snap:#?}");
     Ok(())

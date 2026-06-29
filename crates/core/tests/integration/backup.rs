@@ -9,11 +9,7 @@ use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_backend::stdout::CommandSource;
-use rustic_core::{
-    BackupOptions, CommandInput, FilterOptions, Grouped, LsOptions, Metadata, Node, NodeType,
-    ParentOptions, RusticResult, SnapshotGroupCriterion, SnapshotOptions, StringList,
-    repofile::{PackId, SnapshotFile},
-};
+use rustic_core::{BackupOptions, CommandInput, FilterOptions, Grouped, LsOptions, Metadata, Node, NodeType, ParentOptions, RusticResult, SnapshotGroupCriterion, SnapshotOptions, StringList, repofile::{PackId, SnapshotFile}, CancelToken};
 
 use super::{
     RepoOpen, TestSource, assert_with_win, insta_node_redaction, insta_snapshotfile_redaction,
@@ -40,7 +36,7 @@ fn test_backup_with_tar_gz_passes(
 
     // first backup
     let src = LocalSource::new(paths);
-    let first_snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let first_snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // We can also bind to scope ( https://docs.rs/insta/latest/insta/struct.Settings.html#method.bind_to_scope )
     // But I think that can get messy with a lot of tests, also checking which settings are currently applied
@@ -70,7 +66,7 @@ fn test_backup_with_tar_gz_passes(
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // second backup
-    let second_snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let second_snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("backup-tar-summary-second", &second_snapshot);
@@ -91,7 +87,7 @@ fn test_backup_with_tar_gz_passes(
         .to_snapshot()?;
     let opts =
         opts.parent_opts(ParentOptions::default().parents(vec![second_snapshot.id.to_string()]));
-    let third_snapshot = repo.backup(&opts, &src, snap)?;
+    let third_snapshot = repo.backup(&opts, &src, snap, CancelToken::new())?;
 
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("backup-tar-summary-third", &third_snapshot);
@@ -169,7 +165,7 @@ fn test_backup_dry_run_with_tar_gz_passes(
 
     // dry-run backup
     let src = LocalSource::new(paths);
-    let snap_dry_run = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let snap_dry_run = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("dryrun-tar-summary-first", &snap_dry_run);
@@ -183,7 +179,7 @@ fn test_backup_dry_run_with_tar_gz_passes(
 
     // first real backup
     let opts = opts.dry_run(false);
-    let first_snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let first_snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
     assert_eq!(snap_dry_run.tree, first_snapshot.tree);
     let packs: Vec<_> = repo.list::<PackId>()?.collect();
 
@@ -201,7 +197,7 @@ fn test_backup_dry_run_with_tar_gz_passes(
     let repo = repo.to_indexed_ids()?;
     // second dry-run backup
     let opts = opts.dry_run(true);
-    let snap_dry_run = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let snap_dry_run = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("dryrun-tar-summary-second", &snap_dry_run);
@@ -217,7 +213,7 @@ fn test_backup_dry_run_with_tar_gz_passes(
     let repo = repo.to_indexed_ids()?;
     // second real backup
     let opts = opts.dry_run(false);
-    let second_snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let second_snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
     assert_eq!(snap_dry_run.tree, second_snapshot.tree);
     Ok(())
 }
@@ -231,10 +227,10 @@ fn test_backup_stdin_command(
     let repo = set_up_repo?.to_indexed_ids()?;
     let d: CommandInput = "echo test".parse()?;
 
-    let src = CommandSource::new(d, "test");
+    let src = CommandSource::new(&d, "test");
     let opts = BackupOptions::default();
     // backup data from cmd
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
     insta_snapshotfile_redaction.bind(|| {
         assert_with_win("stdin-command-summary", &snapshot);
     });

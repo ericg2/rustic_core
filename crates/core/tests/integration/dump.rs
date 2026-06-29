@@ -5,10 +5,7 @@ use bytesize::ByteSize;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{
-    BackupOptions, ConfigOptions, IndexedFullStatus, PathList, Repository,
-    repofile::{Chunker, SnapshotFile},
-};
+use rustic_core::{BackupOptions, ConfigOptions, IndexedFullStatus, PathList, Repository, repofile::{Chunker, SnapshotFile}, CancelToken};
 use tempfile::tempdir;
 
 use super::{RepoOpen, set_up_repo};
@@ -43,7 +40,7 @@ fn backup_single_file(
     let paths = PathList::from_iter([file_path]);
     let src = LocalSource::new(paths);
     let opts = BackupOptions::default().as_path(PathBuf::from_str(name)?);
-    let _snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let _snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     Ok((repo.to_indexed()?, format!("latest:{name}")))
 }

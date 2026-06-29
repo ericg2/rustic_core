@@ -4,10 +4,7 @@ use std::os::unix::fs::MetadataExt;
 use anyhow::Result;
 use rustic_backend::BackendOptions;
 use rustic_backend::local::{LocalDestination, LocalSource};
-use rustic_core::{
-    BackupOptions, ConfigOptions, Credentials, KeyOptions, LsOptions, Repository,
-    RepositoryBackends, RepositoryOptions, RestoreOptions, SnapshotOptions, repofile::SnapshotFile,
-};
+use rustic_core::{BackupOptions, ConfigOptions, Credentials, KeyOptions, LsOptions, Repository, RepositoryBackends, RepositoryOptions, RestoreOptions, SnapshotOptions, repofile::SnapshotFile, CancelToken};
 
 #[test]
 fn test_restore_local() -> Result<()> {
@@ -29,7 +26,7 @@ fn test_restore_local() -> Result<()> {
         .add_tags("tag1,tag2")?
         .to_snapshot()?;
 
-    let snap = repo.backup(&opts, &src, snap)?;
+    let snap = repo.backup(&opts, &src, snap, CancelToken::new())?;
 
     let repo = repo.to_indexed()?;
     let node = repo.node_from_snapshot_path("latest", |_| true)?;
@@ -38,8 +35,8 @@ fn test_restore_local() -> Result<()> {
 
     let dest = LocalDestination::new("C:\\Users\\Eric\\Documents\\restore-6-6-26");
     let restore_opts = RestoreOptions::default();
-    let plan = repo.prepare_restore(&restore_opts, ls.clone(), &dest, false)?;
-    repo.restore(plan, &restore_opts, ls, &dest)?;
+    let plan = repo.prepare_restore(&restore_opts, ls.clone(), &dest, false, CancelToken::new())?;
+    repo.restore(plan, &restore_opts, ls, &dest, CancelToken::new())?;
 
     Ok(())
 }

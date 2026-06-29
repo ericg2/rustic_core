@@ -4,7 +4,7 @@ use anyhow::Result;
 use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
-use rustic_core::{BackupOptions, CheckOptions, CopySnapshot, repofile::SnapshotFile};
+use rustic_core::{BackupOptions, CheckOptions, CopySnapshot, repofile::SnapshotFile, CancelToken};
 
 use super::{RepoOpen, TestSource, set_up_repo, tar_gz_testdata};
 
@@ -23,7 +23,7 @@ fn test_copy(tar_gz_testdata: Result<TestSource>, set_up_repo: Result<RepoOpen>)
 
     // first backup
     let src = LocalSource::new(paths);
-    let snap = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let snap = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // re-read index
     let repo = repo.to_indexed()?;
