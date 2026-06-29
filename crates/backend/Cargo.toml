@@ -106,7 +106,7 @@ xattr = "1"
 # opendal backend
 # - sftp is not supported on windows, see https://github.com/apache/incubator-opendal/issues/2963
 opendal-ext = {
-    git = "https://www.github.com/ericg2/opendal-ext.git",
+    git = "https://github.com/ericg2/opendal-ext.git",
     version = "0.57.0",
     features = [
         "blocking",
@@ -141,7 +141,7 @@ opendal-ext = {
 [target.'cfg(windows)'.dependencies]
 # opendal backend
 opendal-ext = {
-    git = "https://www.github.com/ericg2/opendal-ext.git",
+    git = "https://github.com/ericg2/opendal-ext.git",
     version = "0.57.0",
     features = [
         "blocking",
