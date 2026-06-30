@@ -2650,7 +2650,7 @@ dependencies = [
 [[package]]
 name = "opendal-ext"
 version = "0.57.0"
-source = "git+https://github.com/ericg2/opendal-ext.git#accbd2e4612514bbcedd8891622164942b6d4907"
+source = "git+https://github.com/ericg2/opendal-ext.git#b61c5abb2a47ec1ce4ae6008b7cf992908c09894"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4293,6 +4293,7 @@ dependencies = [
  "globset",
  "heck",
  "hex",
+ "humantime-serde",
  "ignore",
  "insta",
  "jiff",
