@@ -66,6 +66,7 @@ impl OpenDALBackend {
             tokio::task::block_in_place(|| Operator::new(op))
         } else {
             // Sync context: no runtime at all, just call it directly
+            let _guard = runtime().enter();
             Operator::new(op)
         }
         .map_err(|err| {
