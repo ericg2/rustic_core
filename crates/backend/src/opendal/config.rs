@@ -5,7 +5,6 @@ use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::collections::HashMap;
-use std::hash::Hasher;
 use std::sync::Arc;
 
 #[serde_as]
@@ -20,6 +19,11 @@ pub struct OpenDALRepo {
 }
 
 impl OpenDALRepo {
+    /// Creates an [`OpenDALRepo`] from a config.
+    pub fn from_config(config: OpenDALConfig) -> Self {
+        Self { config }
+    }
+
     /// Creates an [`OpenDALRepo`] from an iterator.
     ///
     /// # Important
@@ -35,6 +39,12 @@ impl OpenDALRepo {
         Self {
             config: OpenDALConfig::from_iter(scheme, dict),
         }
+    }
+}
+
+impl From<OpenDALConfig> for OpenDALRepo {
+    fn from(value: OpenDALConfig) -> Self {
+        OpenDALRepo::from_config(value)
     }
 }
 
