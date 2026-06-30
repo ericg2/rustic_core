@@ -18,9 +18,9 @@
 use log::warn;
 use opendal_ext::raw::oio::Entry;
 use opendal_ext::raw::*;
-use opendal_ext::{Buffer, Builder, Capability, Configurator, EntryMode, Error, ErrorKind, Metadata};
+use opendal_ext::{Buffer, Builder, Capability, Configurator, EntryMode, Error, ErrorKind, Metadata, Operator};
 use rustic_core::vfs::{IdenticalSnapshot, Latest, OpenFile, Vfs};
-use rustic_core::{BackendOptions, Credentials, IndexedFullStatus, Node, Repository, RepositoryOptions};
+use rustic_core::{BackendOptions, Credentials, IndexedFullStatus, Node, Repository, RepositoryOptions, RusticResult};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
@@ -370,7 +370,6 @@ fn spawn_refresh_task(vfs: &Arc<RwLock<Vfs>>, repo: Arc<IndexedRepo>, interval: 
 }
 
 // ── VfsBackend impl ───────────────────────────────────────────────────────────
-
 impl VfsBackend {
     /// Construct a [`VfsBackend`] from an already-opened, indexed rustic
     /// repository.
