@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 #[serde_as]
-#[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
+#[derive(Clone, Debug, Setters, Serialize, Deserialize, Default, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
@@ -50,7 +50,7 @@ impl From<OpenDALConfig> for OpenDALRepo {
 
 impl RepositoryConfig for OpenDALRepo {
     fn get_path(&self) -> Option<String> {
-        Some(format!("opendal:{}", &self.config.config.key()))
+        self.config.config.key().map(|x| format!("opendal:{}", &x))
     }
 
     fn get_options(&self) -> HashMap<String, String> {
