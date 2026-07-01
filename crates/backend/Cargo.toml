@@ -101,7 +101,8 @@ dashmap = "6"
 opendal-ext = {
     git = "https://github.com/ericg2/opendal-ext.git",
     version = "0.57.0",
-    optional = true
+    features = ["full"],
+    optional = true,
 }
 
 [target.'cfg(not(any(windows, target_os="openbsd")))'.dependencies]
