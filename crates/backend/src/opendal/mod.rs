@@ -13,3 +13,5 @@ pub use source::OpenDALSource;
 pub use vfs::{RusticVfsConfig, RusticVfsBuilder};
 
 pub(crate) use backend::OpenDALBackend;
+
+pub use opendal_ext;

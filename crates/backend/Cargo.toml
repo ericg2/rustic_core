@@ -40,6 +40,7 @@ opendal = [
     "dep:tokio",
     "tokio/rt-multi-thread",
     "dep:typed-path",
+    "opendal-ext/full"
 ]
 rest = ["dep:reqwest", "dep:backon"]
 rclone = ["rest", "dep:rand", "dep:semver"]
