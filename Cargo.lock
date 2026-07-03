@@ -2592,7 +2592,6 @@ dependencies = [
 [[package]]
 name = "opendal-ext"
 version = "0.57.0"
-source = "git+https://github.com/ericg2/opendal-ext.git#6d3c65e7476091da390a37b172a4eba37a5dc264"
 dependencies = [
  "anyhow",
  "async-trait",

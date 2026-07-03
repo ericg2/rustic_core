@@ -100,8 +100,7 @@ nix = "0.31.3"
 cached = "1.1.0"
 dashmap = "6"
 opendal-ext = {
-    git = "https://github.com/ericg2/opendal-ext.git",
-    version = "0.57.0",
+    path = "D:\\opendal-ext",
     features = ["full"],
     optional = true,
 }
