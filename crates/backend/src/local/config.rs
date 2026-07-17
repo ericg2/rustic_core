@@ -13,7 +13,7 @@ use std::sync::Arc;
 #[setters(into)]
 #[non_exhaustive]
 /// A local [`Repository`].
-pub struct LocalRepo {
+pub struct LocalConfig {
     /// The base path of the backend.
     pub path: Option<PathBuf>,
     /// The command to call after a file was created.
@@ -22,7 +22,7 @@ pub struct LocalRepo {
     pub post_delete_command: Option<String>,
 }
 
-impl LocalRepo {
+impl LocalConfig {
     /// Creates a new [`LocalRepo`] with the given [`Path`].
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
@@ -57,7 +57,7 @@ impl LocalRepo {
     }
 }
 
-impl RepositoryConfig for LocalRepo {
+impl RepositoryConfig for LocalConfig {
     fn get_path(&self) -> Option<String> {
         self.path.clone().map(|x| x.to_string_lossy().to_string())
     }

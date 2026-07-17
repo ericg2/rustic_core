@@ -1,33 +1,36 @@
 #[cfg(test)]
 mod tests {
-    use opendal_ext::config::OpenDALConfig;
-    use opendal_ext::Throttle;
-    use std::collections::BTreeMap;
     use crate::choose::BackendBuilder;
+    use crate::opendal::config::*;
+    use std::collections::BTreeMap;
     use std::str::FromStr;
 
     use crate::BackendOptions;
+    use crate::local::*;
+    use crate::opendal::OpenDALConfig;
+    use crate::opendal::vfs::*;
     use anyhow::Result;
+    use opendal::Operator;
     use rstest::rstest;
+    use rustic_core::repofile::SnapshotFile;
+    use rustic_core::{
+        BackupOptions, CancelToken, ConfigOptions, Credentials, KeyOptions, PathList, Repository,
+        RepositoryOptions,
+    };
     use rustic_core::{FileType, Id};
     use serde::Deserialize;
     use std::{fs, path::PathBuf};
-    use crate::opendal::OpenDALRepo;
-    use rustic_core::repofile::SnapshotFile;
-    use opendal_ext::Operator;
-    use crate::opendal::vfs::*;
-    use crate::local::*;
     use tempfile::tempdir;
-    use rustic_core::{BackupOptions, CancelToken, ConfigOptions, Credentials, KeyOptions, PathList, Repository, RepositoryOptions};
-    // #[rstest]
-    // #[case("10kB,10MB", Throttle{bandwidth:10_000, burst:10_000_000})]
-    // #[case("10 kB,10  MB", Throttle{bandwidth:10_000, burst:10_000_000})]
-    // #[case("10kB, 10MB", Throttle{bandwidth:10_000, burst:10_000_000})]
-    // #[case(" 10kB,   10MB", Throttle{bandwidth:10_000, burst:10_000_000})]
-    // #[case("10kiB,10MiB", Throttle{bandwidth:10_240, burst:10_485_760})]
-    // fn correct_throttle(#[case] input: &str, #[case] expected: Throttle) {
-    //     assert_eq!(Throttle::from_str(input).unwrap(), expected);
-    // }
+
+    #[rstest]
+    #[case("10kB,10MB", Throttle{bandwidth:10_000, burst:10_000_000})]
+    #[case("10 kB,10  MB", Throttle{bandwidth:10_000, burst:10_000_000})]
+    #[case("10kB, 10MB", Throttle{bandwidth:10_000, burst:10_000_000})]
+    #[case(" 10kB,   10MB", Throttle{bandwidth:10_000, burst:10_000_000})]
+    #[case("10kiB,10MiB", Throttle{bandwidth:10_240, burst:10_485_760})]
+    fn correct_throttle(#[case] input: &str, #[case] expected: Throttle) {
+        assert_eq!(Throttle::from_str(input).unwrap(), expected);
+    }
 
     #[rstest]
     #[case("")]
@@ -36,14 +39,6 @@ mod tests {
     #[case("10kB;10MB")]
     fn invalid_throttle(#[case] input: &str) {
         assert!(Throttle::from_str(input).is_err());
-    }
-
-    #[test]
-    fn force_link_b2() {
-        // This does nothing functionally — it just forces the compiler/linker
-        // to keep a real reference to opendal's B2 builder type, instead of
-        // letting it get stripped as dead code since nothing else touches it.
-        let _ = opendal_ext::services::B2::default();
     }
 
     #[rstest]
@@ -57,15 +52,14 @@ mod tests {
         }
 
         let test: TestCase = toml::from_str(&fs::read_to_string(test_case)?)?;
-        let repo = OpenDALConfig::from_iter(test.path, test.options);
-        let be = OpenDALRepo::from_config(repo.clone());
+        let be = OpenDALConfig::from_iter(test.path, test.options);
         let _ = BackendOptions::default().with_repo(&be).to_backends()?;
 
         // Make sure the repository can be serialized and de-serialized as well...
-        let s_repo = serde_json::to_string(&repo)?;
+        let s_repo = serde_json::to_string(&be)?;
         assert!(!s_repo.is_empty());
         let d_repo = serde_json::from_str::<OpenDALConfig>(&s_repo)?;
-        assert_eq!(repo, d_repo);
+        assert_eq!(be, d_repo);
 
         Ok(())
     }
@@ -87,7 +81,6 @@ mod tests {
         let fixture_path = PathBuf::from(format!("tests/fixtures/opendal/{fixture}.toml"));
         let test: TestCase = toml::from_str(&fs::read_to_string(fixture_path)?)?;
         let backend = OpenDALConfig::from_iter(test.path, test.options);
-        let backend = OpenDALRepo::from_config(backend);
         let be = BackendOptions::default()
             .with_repo(&backend)
             .to_backends()?;
@@ -108,7 +101,6 @@ mod tests {
         Ok(())
     }
 
-
     /// Strips the leading separator so `/tmp/foo` becomes `tmp/foo`,
     /// matching rustic's file-structure layout inside the VFS.
     fn vfs_path(host_path: &std::path::Path) -> String {
@@ -123,7 +115,7 @@ mod tests {
     async fn backup_and_read_through_vfs() {
         // ── 1. Repository ────────────────────────────────────────────────────
         let repo_dir = tempdir().expect("repo tempdir");
-        let local = LocalRepo::new(repo_dir);
+        let local = LocalConfig::new(repo_dir);
 
         let backends = BackendOptions::default()
             .with_repo(&local)
@@ -151,7 +143,13 @@ mod tests {
         let mut file = SnapshotFile::default();
         file.hostname = "testvm".into();
         file.label = "test".into();
-        file = repo.backup(&BackupOptions::default(), &LocalSource::new(paths), file, CancelToken::new())
+        file = repo
+            .backup(
+                &BackupOptions::default(),
+                &LocalSource::new(paths),
+                file,
+                CancelToken::new(),
+            )
             .expect("backup");
 
         // ── 4. VFS operator ──────────────────────────────────────────────────

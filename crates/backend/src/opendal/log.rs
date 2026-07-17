@@ -1,14 +1,14 @@
 use log::{Level, log};
-use opendal_ext::layers::LoggingInterceptor;
-use opendal_ext::raw::{AccessorInfo, Operation};
-use opendal_ext::{Error, ErrorKind};
+use opendal::layers::LoggingInterceptor;
+use opendal::raw::{AccessorInfo, Operation};
+use opendal::{Error, ErrorKind};
 use std::fmt::Display;
 
 static LOGGING_TARGET: &str = "opendal::services";
 
 /// The DefaultLoggingInterceptor will log the message by the standard logging macro.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct OpenLogLayer;
+pub(crate) struct OpenLogLayer;
 
 impl LoggingInterceptor for OpenLogLayer {
     #[inline]

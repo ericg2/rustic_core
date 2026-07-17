@@ -28,7 +28,7 @@ use nix::{
 };
 use rustic_core::repofile::{Metadata, Node};
 use rustic_core::{
-    Destination, DestinationBuilder, ErrorKind, ExtendedAttribute, ReadSourceBuilder,
+    Destination, DestinationBuilder, ErrorKind, ExtendedAttribute, NodeType, ReadSourceBuilder,
     RestoreOptions, RusticError, RusticResult,
 };
 use serde::{Deserialize, Serialize};
@@ -608,8 +608,8 @@ impl LocalWriter {
 }
 
 impl LocalWriter {
-    fn path(&self, path: &Path) -> PathBuf {
-        crate::join_force(&self.path, path)
+    fn path(&self, path: impl AsRef<Path>) -> PathBuf {
+        crate::join_force(&self.path, path.as_ref())
     }
 }
 

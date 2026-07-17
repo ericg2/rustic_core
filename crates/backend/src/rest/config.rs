@@ -40,7 +40,7 @@ fn read_file_contents(log_name: &'static str, path: impl AsRef<Path>) -> RusticR
 #[serde(rename_all = "kebab-case")]
 #[setters(into)]
 #[non_exhaustive]
-pub struct RestRepo {
+pub struct RestConfig {
     /// The [`Url`] of the REST backend.
     pub url: Option<String>,
 
@@ -87,7 +87,7 @@ pub struct RestRepo {
     pub tls_client_cert: Option<String>,
 }
 
-impl RestRepo {
+impl RestConfig {
     /// Creates a new [`RestRepo`] with the given URI.
     pub fn new(url: impl AsRef<str>) -> Self {
         Self {
@@ -211,7 +211,7 @@ impl RestRepo {
     }
 }
 
-impl RepositoryConfig for RestRepo {
+impl RepositoryConfig for RestConfig {
     fn get_path(&self) -> Option<String> {
         self.url.clone().map(|x| format!("rest:{}", &x))
     }

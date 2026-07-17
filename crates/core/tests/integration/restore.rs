@@ -1,69 +1,25 @@
 #[cfg(not(windows))]
 use std::os::unix::fs::MetadataExt;
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::fs;
 
 use anyhow::Result;
-use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_backend::local::{LocalDestination, LocalSource};
+use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_core::{
     BackupOptions, CancelToken, ConfigOptions, Credentials, KeyOptions, LsOptions, Repository,
     RepositoryBackends, RepositoryOptions, RestoreOptions, SnapshotOptions, repofile::SnapshotFile,
 };
 
-#[test]
-fn test_restore_local() -> Result<()> {
-    let repo_be = BackendOptions::default()
-        .repository("C:\\Users\\Eric\\Documents\\test-repo-6-6")
-        .to_backends()?;
+use rstest::rstest;
+use tempfile::tempdir;
 
-    let repo_opts = RepositoryOptions::default();
-    let repo_creds = Credentials::password("Rugratse124!");
-    let repo_key = KeyOptions::default();
-    let repo_config = ConfigOptions::default();
-    let repo = Repository::new(&repo_opts, &repo_be)?
-        .init(&repo_creds, &repo_key, &repo_config)?
-        .to_indexed_ids()?;
+use super::{
+    RepoOpen, TestSource, assert_with_win, insta_node_redaction, insta_snapshotfile_redaction,
+    set_up_repo, tar_gz_testdata,
+};
 
-    let opts = BackupOptions::default();
-    let src = LocalSource::new("C:\\Users\\Eric\\Documents\\test-6-6-26");
-    let snap = SnapshotOptions::default()
-        .add_tags("tag1,tag2")?
-        .to_snapshot()?;
-
-    let snap = repo.backup(&opts, &src, snap, CancelToken::new())?;
-
-    let repo = repo.to_indexed()?;
-    let node = repo.node_from_snapshot_path("latest", |_| true)?;
-    let ls_opts = LsOptions::default();
-    let ls = repo.ls(&node, &ls_opts)?;
-
-    let dest = LocalDestination::new("C:\\Users\\Eric\\Documents\\restore-6-6-26");
-    let restore_opts = RestoreOptions::default();
-    let plan = repo.prepare_restore(&restore_opts, ls.clone(), &dest, false, CancelToken::new())?;
-    repo.restore(plan, &restore_opts, ls, &dest, CancelToken::new())?;
-
-    Ok(())
-}
-
-// #[rstest]
-// fn test_restore_local(tar_gz_testdata: Result<TestSource>, set_up_repo: Result<RepoOpen>) -> Result<()> {
-//     let (source, repo) = (tar_gz_testdata?, set_up_repo?.to_indexed_ids()?);
-//     let opts = BackupOptions::default();
-//     let src = LocalSource::new(&source.path_list());
-//     let snap = repo.backup(&opts, &src, SnapshotFile::default())?;
-//
-//     let repo = repo.to_indexed()?;
-//     let node = repo.node_from_snapshot_path("latest", |_| true)?;
-//     let ls_opts = LsOptions::default();
-//     let ls = repo.ls(&node, &ls_opts)?;
-//
-//     let restore_dir = tempdir()?;
-//     let dest = LocalDestination::new(restore_dir.path());
-//     let restore_opts = RestoreOptions::default();
-//     let plan = repo.prepare_restore(&restore_opts, ls.clone(), &dest, false)?;
-//     repo.restore(plan, &restore_opts, ls, &dest)?;
-//
-//     Ok(())
-// }
 
 #[rstest]
 #[cfg(not(windows))]
@@ -74,7 +30,8 @@ fn test_restore_preserves_hardlinks(
     let (source, repo) = (tar_gz_testdata?, set_up_repo?.to_indexed_ids()?);
 
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
-    let _snapshot = repo.backup(&opts, &source.path_list(), SnapshotFile::default())?;
+    let src = LocalSource::new(source.path_list());
+    let _snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     let repo = repo.to_indexed()?;
     let node = repo.node_from_snapshot_path("latest", |_| true)?;
@@ -82,10 +39,10 @@ fn test_restore_preserves_hardlinks(
     let ls = repo.ls(&node, &ls_opts)?;
 
     let restore_dir = tempdir()?;
-    let dest = LocalDestination::new(restore_dir.path())?;
+    let dest = LocalDestination::new(restore_dir.path());
     let restore_opts = RestoreOptions::default();
-    let plan = repo.prepare_restore(&restore_opts, ls.clone(), &dest, false)?;
-    repo.restore(plan, &restore_opts, ls, &dest)?;
+    let plan = repo.prepare_restore(&restore_opts, ls.clone(), &dest, false, CancelToken::new())?;
+    repo.restore(plan, &restore_opts, ls, &dest, CancelToken::new())?;
 
     let hardlink = restore_dir.path().join("test/0/tests/testfile-hardlink");
     let linked = restore_dir.path().join("test/0/tests/testfile");

@@ -10,9 +10,7 @@ use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_backend::stdout::CommandSource;
 use rustic_core::{
-    BackupOptions, CancelToken, CommandInput, FilterOptions, Grouped, LsOptions, Metadata, Node,
-    NodeType, ParentOptions, RusticResult, SnapshotGroupCriterion, SnapshotOptions, StringList,
-    repofile::{PackId, SnapshotFile},
+    BackupOptions, CancelToken, CommandInput, FilterOptions, Grouped, LsOptions, Metadata, Node, NodeType, ParentOptions, PathList, RusticResult, SnapshotGroupCriterion, SnapshotOptions, StringList, repofile::{PackId, SnapshotFile}
 };
 
 use super::{
@@ -285,7 +283,7 @@ fn test_backup_excludes_xattr_entries(set_up_repo: Result<RepoOpen>) -> Result<(
     let opts = BackupOptions::default().as_path(PathBuf::from("test"));
 
     let src = LocalSource::new(paths).filter_opts(filter_opts);
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default())?;
+    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     let repo = repo.to_indexed_ids()?;
     let mut root_node = Node::new_node(OsStr::new(""), NodeType::Dir, Metadata::default());

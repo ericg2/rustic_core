@@ -8,11 +8,11 @@ use rustic_core::{
     ReadSourceEntry, RusticError, RusticResult, WriteFileOpen, WriteHandle,
 };
 
+use crate::opendal::config::OpenDALConfig;
 use derive_setters::Setters;
-use opendal_ext::Entry;
-use opendal_ext::blocking::{StdReader, StdWriter};
-use opendal_ext::config::OpenDALConfig;
-use opendal_ext::options::{ListOptions, WriteOptions};
+use opendal::Entry;
+use opendal::blocking::{StdReader, StdWriter};
+use opendal::options::{ListOptions, WriteOptions};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::ffi::OsStr;
@@ -172,7 +172,7 @@ impl OpenDALReader {
         let meta = rustic_core::repofile::Metadata {
             mtime: metadata
                 .last_modified()
-                .map(opendal_ext::raw::Timestamp::into_inner),
+                .map(opendal::raw::Timestamp::into_inner),
             size: metadata.content_length(),
             ..Default::default()
         };

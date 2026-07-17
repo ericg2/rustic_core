@@ -1,9 +1,8 @@
 use bytes::Bytes;
 use log::{error, trace};
-use opendal_ext::blocking::Operator;
-use opendal_ext::config::OpenDALConfig;
-use opendal_ext::layers::LoggingLayer;
-use opendal_ext::options::ReadOptions;
+use opendal::blocking::Operator;
+use opendal::layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer};
+use opendal::options::ReadOptions;
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::path::Path;
 use std::sync::OnceLock;
@@ -11,6 +10,7 @@ use tokio::runtime::Runtime;
 use typed_path::UnixPathBuf;
 
 use crate::opendal::OpenDALSource;
+use crate::opendal::config::{OpenDALConfig, Retry, Throttle};
 use crate::opendal::log::OpenLogLayer;
 use crate::opendal::source::OpenDALReader;
 use rustic_core::{
@@ -20,10 +20,10 @@ use rustic_core::{
 
 mod constants {
     /// Default number of retries
-    pub(super) const DEFAULT_RETRY: u32 = 5;
+    pub(super) const DEFAULT_RETRY: usize = 5;
 
     /// Default number of connections.
-    pub(super) const DEFAULT_CONNECTIONS: u32 = 8;
+    pub(super) const DEFAULT_CONNECTIONS: usize = 8;
 }
 
 fn runtime() -> tokio::runtime::Handle {
@@ -50,36 +50,53 @@ pub struct OpenDALBackend {
 
 impl OpenDALBackend {
     pub(crate) fn new(config: &OpenDALConfig) -> RusticResult<Self> {
-        let op = config
-            .operator()
+        let max_retries = match config.retry {
+            Some(Retry::Off) => 0,
+            None | Some(Retry::Default) => constants::DEFAULT_RETRY,
+            Some(Retry::Custom(value)) => value,
+        };
+
+        let connections = config.connections;
+        let throttle = config.throttle;
+        let scheme = config.scheme.as_deref().ok_or_else(|| {
+            RusticError::new(
+                ErrorKind::InvalidInput,
+                "No scheme given in OpenDAL config.",
+            )
+        })?;
+
+        let mut operator = opendal::Operator::via_iter(scheme, config.options.clone())
             .map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::Backend,
-                    "Creating blocking Operator from path failed.",
+                    "Creating Operator from scheme `{scheme}` failed. Please check the given schema and options.",
                     err,
                 )
+                    .attach_context("scheme", scheme.to_string())
             })?
-            .layer(LoggingLayer::new(OpenLogLayer));
+            .layer(RetryLayer::new().with_max_times(max_retries).with_jitter());
 
-        let operator = if tokio::runtime::Handle::try_current().is_ok() {
-            // Async context: block_in_place yields the thread to Tokio safely
-            tokio::task::block_in_place(|| Operator::new(op))
-        } else {
-            // Sync context: no runtime at all, just call it directly
-            let _guard = runtime().enter();
-            Operator::new(op)
+        if let Some(Throttle { bandwidth, burst }) = throttle {
+            operator = operator.layer(ThrottleLayer::new(bandwidth, burst));
         }
-        .map_err(|err| {
+
+        if let Some(connections) = connections {
+            operator = operator.layer(ConcurrentLimitLayer::new(connections));
+        }
+
+        let _guard = runtime().enter();
+        let operator = Operator::new(operator.layer(LoggingLayer::new(OpenLogLayer))).map_err(|err| {
             RusticError::with_source(
                 ErrorKind::Backend,
-                "Creating blocking Operator from path failed.",
+                "Creating blocking Operator from scheme `{scheme}` failed.",
                 err,
             )
+            .attach_context("scheme", scheme.to_string())
         })?;
 
         Ok(Self {
             operator,
-            config: config.to_owned(),
+            config: config.clone(),
         })
     }
 
@@ -139,7 +156,7 @@ impl ReadBackend for OpenDALBackend {
         if tpe == FileType::Config {
             return match self.operator.stat("config") {
                 Ok(meta) => Ok(vec![(Id::default(), length(meta.content_length(), "config", tpe).unwrap_or_default())]),
-                Err(err) if err.kind() == opendal_ext::ErrorKind::NotFound => Ok(Vec::new()),
+                Err(err) if err.kind() == opendal::ErrorKind::NotFound => Ok(Vec::new()),
                 Err(err) => Err(err).map_err(|err|
                     RusticError::with_source(
                         ErrorKind::Backend,

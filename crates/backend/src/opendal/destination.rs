@@ -1,9 +1,9 @@
+use crate::opendal::config::OpenDALConfig;
 use crate::opendal::source::{OpenDALFile, OpenDALReader};
 use crate::opendal::{OpenDALBackend, OpenDALSource};
 use crate::path_to_str;
 use derive_setters::Setters;
-use opendal_ext::config::OpenDALConfig;
-use opendal_ext::options::{DeleteOptions, WriteOptions};
+use opendal::options::{DeleteOptions, WriteOptions};
 use rustic_core::{
     Destination, DestinationBuilder, ErrorKind, Metadata, Node, ReadSourceBuilder, RestoreOptions,
     RusticError, RusticResult,
@@ -168,7 +168,7 @@ impl Destination for OpenDALWriter {
         let path = path_to_str(&self.root, path, false);
         let meta = match self.be.operator.stat(&path) {
             Ok(meta) => meta,
-            Err(err) if err.kind() == opendal_ext::ErrorKind::NotFound => return Ok(None),
+            Err(err) if err.kind() == opendal::ErrorKind::NotFound => return Ok(None),
             Err(err) => {
                 return Err(RusticError::with_source(
                     ErrorKind::Backend,

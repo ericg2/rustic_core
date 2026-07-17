@@ -4,14 +4,11 @@ mod destination;
 mod log;
 mod source;
 mod tests;
-mod util;
 mod vfs;
 
-pub use config::OpenDALRepo;
+pub use config::{OpenDALConfig, Retry, Throttle};
 pub use destination::OpenDALDestination;
 pub use source::OpenDALSource;
-pub use vfs::{RusticVfsConfig, RusticVfsBuilder};
+pub use vfs::{RusticVfsBuilder, RusticVfsConfig};
 
 pub(crate) use backend::OpenDALBackend;
-
-pub use opendal_ext;

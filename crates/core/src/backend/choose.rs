@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 use crate::{RepositoryBackends, RepositoryConfig, RusticResult};
 
+#[cfg(feature = "clap")]
+use clap::ValueHint;
+
 /// Options for a backend.
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 #[cfg_attr(feature = "merge", derive(conflate::Merge))]

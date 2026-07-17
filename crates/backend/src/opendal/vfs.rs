@@ -15,20 +15,22 @@
 // specific language governing permissions and limitations
 // under the License.
 
+use crate::BackendBuilder;
 use log::warn;
-use opendal_ext::raw::oio::Entry;
-use opendal_ext::raw::*;
-use opendal_ext::{Buffer, Builder, Capability, Configurator, EntryMode, Error, ErrorKind, Metadata, Operator};
+use opendal::raw::oio::Entry;
+use opendal::raw::*;
+use opendal::{Buffer, Builder, Capability, Configurator, EntryMode, Error, ErrorKind, Metadata};
 use rustic_core::vfs::{IdenticalSnapshot, Latest, OpenFile, Vfs};
-use rustic_core::{BackendOptions, Credentials, IndexedFullStatus, Node, Repository, RepositoryOptions, RusticResult};
+use rustic_core::{
+    BackendOptions, Credentials, IndexedFullStatus, Node, Repository, RepositoryOptions,
+};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use std::vec;
-use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tokio::time;
-use crate::BackendBuilder;
 
 /// Configuration for the Rustic VFS OpenDAL backend.
 ///
@@ -214,7 +216,7 @@ impl Builder for RusticVfsBuilder {
     /// opened with the supplied configuration. Returns
     /// [`Unexpected`](opendal_core::ErrorKind::Unexpected) for transient
     /// failures (e.g. the storage backend is temporarily unreachable).
-    fn build(self) -> opendal_ext::Result<impl Access> {
+    fn build(self) -> opendal::Result<impl Access> {
         VfsBackend::from_config(self.config)
     }
 }
@@ -310,7 +312,7 @@ pub struct VfsBackend {
 /// Propagates any rustic error (e.g. index read failure, corrupt pack) as an
 /// [`opendal_core::ErrorKind::Unexpected`] temporary error so that the caller
 /// can retry without discarding the existing VFS.
-fn build_vfs(repo: &IndexedRepo) -> opendal_ext::Result<Vfs> {
+fn build_vfs(repo: &IndexedRepo) -> opendal::Result<Vfs> {
     repo.get_all_snapshots()
         .and_then(|snapshots| {
             Vfs::from_snapshots(
@@ -390,10 +392,7 @@ impl VfsBackend {
     ///
     /// Returns [`Unexpected`](opendal_core::ErrorKind::Unexpected) if the
     /// initial VFS build fails (e.g. the repository index is unreadable).
-    pub fn from_repo(
-        repo: Arc<IndexedRepo>,
-        refresh_interval: Duration,
-    ) -> opendal_ext::Result<Self> {
+    pub fn from_repo(repo: Arc<IndexedRepo>, refresh_interval: Duration) -> opendal::Result<Self> {
         let vfs = Arc::new(RwLock::new(build_vfs(&repo)?));
         let info = AccessorInfo::default();
         info.set_scheme("rustic")
@@ -434,7 +433,7 @@ impl VfsBackend {
     /// | `credentials` is `None` | [`ConfigInvalid`](opendal_core::ErrorKind::ConfigInvalid) |
     /// | `backend` options cannot be parsed | [`ConfigInvalid`](opendal_core::ErrorKind::ConfigInvalid) |
     /// | Repository cannot be opened / indexed | [`Unexpected`](opendal_core::ErrorKind::Unexpected) (temporary) |
-    pub fn from_config(config: RusticVfsConfig) -> opendal_ext::Result<Self> {
+    pub fn from_config(config: RusticVfsConfig) -> opendal::Result<Self> {
         let creds = config.credentials.ok_or_else(|| {
             Error::new(
                 ErrorKind::ConfigInvalid,
@@ -478,7 +477,7 @@ impl VfsBackend {
     ///
     /// Returns [`NotFound`](opendal_core::ErrorKind::NotFound) if the path
     /// does not exist in the current VFS snapshot.
-    async fn node_from_path(&self, path: &str) -> opendal_ext::Result<Node> {
+    async fn node_from_path(&self, path: &str) -> opendal::Result<Node> {
         let path = normalize_path(path);
         self.vfs
             .read()
@@ -509,7 +508,7 @@ impl Access for VfsBackend {
     ///
     /// Returns [`NotFound`](opendal_core::ErrorKind::NotFound) if the path
     /// does not exist in the current VFS snapshot.
-    async fn stat(&self, path: &str, _args: OpStat) -> opendal_ext::Result<RpStat> {
+    async fn stat(&self, path: &str, _args: OpStat) -> opendal::Result<RpStat> {
         let node = self.node_from_path(path).await?;
         Ok(RpStat::new(meta_from_node(&node)))
     }
@@ -525,7 +524,7 @@ impl Access for VfsBackend {
     /// Returns [`NotFound`](opendal_core::ErrorKind::NotFound) if the path
     /// does not exist, or [`Unexpected`](opendal_core::ErrorKind::Unexpected)
     /// if the file cannot be opened in the rustic layer.
-    async fn read(&self, path: &str, args: OpRead) -> opendal_ext::Result<(RpRead, Self::Reader)> {
+    async fn read(&self, path: &str, args: OpRead) -> opendal::Result<(RpRead, Self::Reader)> {
         let node = self.node_from_path(path).await?;
         let meta = meta_from_node(&node);
         let file = self.repo.open_file(&node).map_err(|e| {
@@ -533,8 +532,8 @@ impl Access for VfsBackend {
                 ErrorKind::Unexpected,
                 "Failed to open file in rustic backend.",
             )
-                .set_source(e)
-                .set_temporary()
+            .set_source(e)
+            .set_temporary()
         })?;
         let reader = VfsReader::new(
             file,
@@ -555,11 +554,7 @@ impl Access for VfsBackend {
     ///
     /// Returns [`NotFound`](ErrorKind::NotFound) if the path
     /// does not exist or is not a directory in the current VFS snapshot.
-    async fn list(
-        &self,
-        path: &str,
-        _args: OpList,
-    ) -> opendal_ext::Result<(RpList, Self::Lister)> {
+    async fn list(&self, path: &str, _args: OpList) -> opendal::Result<(RpList, Self::Lister)> {
         let normalized = normalize_path(path);
         let path_buf = Path::new(&normalized).to_path_buf();
         let entries = self
@@ -665,7 +660,7 @@ impl oio::Read for VfsReader {
     ///
     /// Returns [`Unexpected`](opendal_core::ErrorKind::Unexpected) (temporary)
     /// if the underlying rustic blob read fails.
-    async fn read(&mut self) -> opendal_ext::Result<Buffer> {
+    async fn read(&mut self) -> opendal::Result<Buffer> {
         let read_size = match self.len {
             Some(0) => return Ok(Buffer::new()),
             Some(remaining) => BUFFER_SIZE.min(remaining),
@@ -725,7 +720,7 @@ impl oio::List for VfsLister {
     ///
     /// Entry paths are constructed as `{root}/{node.name}`, with a trailing
     /// `/` appended for directories (as required by OpenDAL's path convention).
-    async fn next(&mut self) -> opendal_ext::Result<Option<Entry>> {
+    async fn next(&mut self) -> opendal::Result<Option<Entry>> {
         let entry = self.nodes.next().map(|n| {
             let base = self.root.to_string_lossy().replace('\\', "/");
             let base = base.trim_matches('/');

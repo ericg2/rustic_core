@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[setters(into)]
 #[non_exhaustive]
 /// A repository using Rclone.
-pub struct RcloneRepo {
+pub struct RcloneConfig {
     /// The URL to use.
     pub url: Option<String>,
 
@@ -27,7 +27,7 @@ pub struct RcloneRepo {
     pub rest_url: Option<String>,
 }
 
-impl RcloneRepo {
+impl RcloneConfig {
     /// Creates a new [`RcloneRepo`] with the given URL.
     pub fn new(url: impl AsRef<str>) -> Self {
         Self {
@@ -73,7 +73,7 @@ impl RcloneRepo {
     }
 }
 
-impl RepositoryConfig for RcloneRepo {
+impl RepositoryConfig for RcloneConfig {
     fn get_path(&self) -> Option<String> {
         self.url.clone().map(|x| format!("rclone:{}", &x))
     }
