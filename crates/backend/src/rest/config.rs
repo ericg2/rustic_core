@@ -2,7 +2,7 @@ use crate::rest::RestBackend;
 use crate::retry::RetrySetting;
 use derive_setters::Setters;
 use jiff::SignedDuration;
-use rustic_core::{ErrorKind, RepositoryConfig, RusticError, RusticResult, WriteBackend};
+use rustic_core::{ErrorKind, BackendConfig, RusticError, RusticResult, WriteBackend};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use std::collections::HashMap;
@@ -211,7 +211,7 @@ impl RestConfig {
     }
 }
 
-impl RepositoryConfig for RestConfig {
+impl BackendConfig for RestConfig {
     fn get_path(&self) -> Option<String> {
         self.url.clone().map(|x| format!("rest:{}", &x))
     }

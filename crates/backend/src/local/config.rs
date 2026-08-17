@@ -1,6 +1,6 @@
-use crate::local::backend::LocalBackend;
+use crate::local::backend::LocalSource;
 use derive_setters::Setters;
-use rustic_core::{ErrorKind, RepositoryConfig, RusticError, RusticResult, WriteBackend};
+use rustic_core::{BackendConfig, ErrorKind, RusticError, RusticResult, WriteBackend, WriteSource};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::collections::HashMap;
@@ -16,10 +16,6 @@ use std::sync::Arc;
 pub struct LocalConfig {
     /// The base path of the backend.
     pub path: Option<PathBuf>,
-    /// The command to call after a file was created.
-    pub post_create_command: Option<String>,
-    /// The command to call after a file was deleted.
-    pub post_delete_command: Option<String>,
 }
 
 impl LocalConfig {
@@ -27,8 +23,6 @@ impl LocalConfig {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             path: Some(path.as_ref().to_path_buf()),
-            post_create_command: None,
-            post_delete_command: None,
         }
     }
 
@@ -51,13 +45,11 @@ impl LocalConfig {
 
         Self {
             path: Some(PathBuf::from(path.as_ref())),
-            post_create_command: map.get("post-create-command").cloned(),
-            post_delete_command: map.get("post-delete-command").cloned(),
         }
     }
 }
 
-impl RepositoryConfig for LocalConfig {
+impl BackendConfig for LocalConfig {
     fn get_path(&self) -> Option<String> {
         self.path.clone().map(|x| x.to_string_lossy().to_string())
     }
@@ -68,13 +60,9 @@ impl RepositoryConfig for LocalConfig {
         ret
     }
 
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
+    fn get_source(&self) -> RusticResult<Arc<dyn WriteSource>> {
         // Make sure the fields are correctly filled.
-        let config = self.path.as_ref().ok_or(RusticError::new(
-            ErrorKind::Configuration,
-            "Path is required for source.",
-        ))?;
-        let ret = LocalBackend::new(config.to_path_buf(), self.clone());
+        let ret = LocalSource::from_config(self)?;
         Ok(Arc::new(ret))
     }
 }

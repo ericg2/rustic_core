@@ -11,8 +11,8 @@ use std::os::unix::ffi::OsStrExt;
 
 use derive_more::Constructor;
 use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
 use serde_aux::prelude::*;
-use serde_derive::{Deserialize, Serialize};
 use serde_with::{
     DefaultOnNull,
     base64::{Base64, Standard},
@@ -20,8 +20,11 @@ use serde_with::{
     serde_as, skip_serializing_none,
 };
 
-use crate::blob::{DataId, tree::TreeId};
-use crate::repofile::RusticTime;
+use crate::{BlockdevOption, DevIdOption, repofile::RusticTime};
+use crate::{
+    SaveOptions, TimeOption, XattrOption,
+    blob::{DataId, tree::TreeId},
+};
 
 #[cfg(not(windows))]
 /// [`NodeErrorKind`] describes the errors that can be returned by an action utilizing a node in Backends
@@ -107,6 +110,7 @@ pub struct Node {
     ///
     /// This should be only set for directories. (TODO: Check if this is correct)
     pub subtree: Option<TreeId>,
+    pub device_id: Option<u64>,
 }
 
 #[serde_as]
@@ -351,6 +355,42 @@ impl Node {
     /// * If the name is not valid unicode
     pub fn name(&self) -> Cow<'_, OsStr> {
         unescape_filename(&self.name).unwrap_or_else(|_| Cow::Borrowed(OsStr::new(&self.name)))
+    }
+
+    /// Transforms the [`Node`] by using a valid [`SaveOptions`] instance.
+    pub fn into_restore(mut self, opts: SaveOptions) -> Self {
+        self.meta.atime = match opts.set_atime.unwrap_or(TimeOption::Mtime) {
+            TimeOption::Yes => self.meta.atime,
+            TimeOption::Mtime => self.meta.mtime,
+            TimeOption::No => None,
+        };
+        self.meta.ctime = match opts.set_ctime.unwrap_or(TimeOption::Yes) {
+            TimeOption::Yes => self.meta.ctime,
+            TimeOption::Mtime => self.meta.mtime,
+            TimeOption::No => None,
+        };
+        self.meta.device_id = match opts.set_devid.unwrap_or_default() {
+            DevIdOption::Yes => self.meta.device_id,
+            DevIdOption::Hardlink if self.meta.links > 1 && !self.is_dir() => self.meta.device_id,
+            _ => 0,
+        };
+        self.meta.extended_attributes = match opts.set_xattrs.unwrap_or_default() {
+            XattrOption::Yes => self.meta.extended_attributes,
+            XattrOption::No => vec![],
+        };
+
+        let node_type = match self.node_type {
+            NodeType::Dev { device } => {
+                if matches!(opts.set_blockdev.unwrap_or_default(), BlockdevOption::File) {
+                    NodeType::File
+                } else {
+                    NodeType::Dev { device }
+                }
+            }
+            other => other,
+        };
+     
+        Node::new(self.name, node_type, self.meta, self.content, self.subtree)
     }
 }
 

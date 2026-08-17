@@ -73,18 +73,18 @@ pub mod stdin;
 pub mod stdout;
 
 mod choose;
-mod filter;
 mod retry;
 mod util;
+mod repo;
 
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 // rustic_backend Public API
-pub use crate::choose::{SupportedBackend, BackendBuilder};
+pub use crate::choose::{BackendBuilder, SupportedBackend};
 
 // re-export for error handling and backwards compatibility.
-pub use rustic_core::{ErrorKind, RusticError, RusticResult, Severity, Status, BackendOptions};
+pub use rustic_core::{BackendOptions, ErrorKind, RusticError, RusticResult, Severity, Status};
 
 pub(crate) fn normalize_value<V: Into<String>>(v: V) -> Value {
     match v.into().as_str() {
@@ -188,27 +188,4 @@ pub(crate) fn join_force(base: impl AsRef<Path>, p: impl AsRef<Path>) -> PathBuf
         }
     }
     out
-}
-
-/// Converts a [`Path`] into an OpenDAL-supported [`String`].
-///
-/// # Arguments
-/// * `base` - The root [`Path`] to use.
-/// * `p` - The [`Path`] to convert from.
-/// * `is_dir` - If representing a directory or file.
-///
-/// # Returns
-/// A valid [`String`] for OpenDAL use.
-pub(crate) fn path_to_str(base: impl AsRef<Path>, p: impl AsRef<Path>, is_dir: bool) -> String {
-    let p = join_force(base, p);
-    let mut r: String = p.to_string_lossy().to_string();
-    if !r.starts_with("/") {
-        r = format!("/{r}")
-    }
-    if is_dir && !r.ends_with("/") {
-        r += "/"
-    } else if !is_dir && r.ends_with("/") {
-        r = r.strip_suffix("/").unwrap_or(&r).to_string()
-    }
-    r.replace("\\", "/") // *** fix for windows-style directories
 }

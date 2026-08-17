@@ -1,6 +1,6 @@
 use derive_setters::Setters;
 use rustic_core::{
-    ErrorKind, ReadSource, ReadSourceBuilder, ReadSourceEntry, RusticError, RusticResult,
+    ErrorKind, FileLister, ReadSourceConfig, File, RusticError, RusticResult,
 };
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -28,7 +28,7 @@ impl StdinSource {
     }
 }
 
-impl ReadSourceBuilder for StdinSource {
+impl ReadSourceConfig for StdinSource {
     type Reader = StdinReader;
 
     fn get_reader(&self) -> RusticResult<Self::Reader> {
@@ -54,14 +54,14 @@ impl StdinReader {
     }
 }
 
-impl ReadSource for StdinReader {
+impl FileLister for StdinReader {
     /// The open type.
     type Open = Stdin;
     /// The iterator type.
-    type Iter = Once<RusticResult<ReadSourceEntry<Stdin>>>;
+    type Iter = Once<RusticResult<File<Stdin>>>;
 
     /// Returns the size of the source.
-    fn size(&self) -> RusticResult<Option<u64>> {
+    fn compute_size(&self) -> RusticResult<Option<u64>> {
         Ok(None)
     }
 
@@ -69,7 +69,7 @@ impl ReadSource for StdinReader {
     fn entries(&self) -> Self::Iter {
         let open = Some(stdin());
         once(
-            ReadSourceEntry::from_path(self.output.clone(), open).map_err(|err| {
+            File::from_path(self.output.clone(), open).map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::Backend,
                     "Failed to create ReadSourceEntry from Stdin",
@@ -79,7 +79,7 @@ impl ReadSource for StdinReader {
         )
     }
 
-    fn paths(&self) -> Vec<PathBuf> {
+    fn roots(&self) -> Vec<PathBuf> {
         vec![self.output.clone()]
     }
 

@@ -1,45 +1,39 @@
 //! Module for backend related functionality.
 pub(crate) mod cache;
+pub(crate) mod choose;
 pub(crate) mod decrypt;
-pub(crate) mod dest;
 pub(crate) mod dry_run;
 pub(crate) mod filters;
 pub(crate) mod hotcold;
+pub(crate) mod list;
 pub(crate) mod node;
+pub(crate) mod repo;
 pub(crate) mod token;
 pub(crate) mod warm_up;
-pub(crate) mod choose;
 
 use bytes::Bytes;
+use derive_setters::Setters;
 use enum_map::Enum;
 use log::trace;
 
 #[cfg(test)]
 use mockall::mock;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
-    Destination,
+    Excludes, FilterOptions, RestoreOptions,
     backend::node::{Metadata, Node, NodeType},
     error::RusticResult,
     id::Id,
 };
-use serde::de::DeserializeOwned;
-use serde_derive::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::fs::File;
-use std::io::{Seek, Write};
-use std::{io::Read, ops::Deref, path::PathBuf, sync::Arc};
 
-/// [`BackendErrorKind`] describes the errors that can be returned by the various Backends
-#[derive(thiserror::Error, Debug, displaydoc::Display)]
-#[non_exhaustive]
-pub enum BackendErrorKind {
-    /// Path is not allowed: `{0:?}`
-    PathNotAllowed(PathBuf),
-}
-
-pub(crate) type BackendResult<T> = Result<T, BackendErrorKind>;
+use std::{collections::HashMap, path::Path};
+use std::{
+    ffi::OsStr,
+    io::{Read, Seek, Write},
+};
+use std::{fmt::Debug, io};
+use std::{ops::Deref, path::PathBuf, sync::Arc};
 
 /// All [`FileType`]s which are located in separated directories
 pub const ALL_FILE_TYPES: [FileType; 4] = [
@@ -91,11 +85,448 @@ impl FileType {
     }
 }
 
+// NOTE: `Node`, `NodeType`, `Metadata`, `BackendResult`, `BackendErrorKind`,
+// `RusticResult`, `Excludes`, `FilterOptions`, `RestoreOptions` are assumed
+// to be defined elsewhere in the crate, unchanged from the original.
+
+/// A single entry found while listing a source.
+#[derive(Debug, Clone)]
+pub struct File {
+    /// The path of the entry.
+    pub path: PathBuf,
+
+    /// The name of the entry.
+    pub name: String,
+
+    /// The [`NodeType`] of the entry.
+    pub node_type: NodeType,
+
+    /// The [`Metadata`] of the entry.
+    pub metadata: Metadata,
+
+    _reader: Option<Arc<dyn ReadSource>>,
+    _writer: Option<Arc<dyn WriteSource>>,
+}
+
+impl File {
+    /// # Returns
+    /// This [`File`] as converted to a [`Node`] type.
+    fn node(&self) -> Node {
+        Node::new_node(
+            OsStr::new(&self.name),
+            self.node_type,
+            self.metadata.clone(),
+        )
+    }
+
+    /// Opens `path` for reading.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file could not be opened.
+    fn open_read(&self) -> io::Result<Box<dyn ReadHandle>> {
+        self._reader
+            .ok_or(io::ErrorKind::Unsupported)?
+            .open_read(&self.path)
+    }
+
+    /// Sets restore-related metadata (timestamps, permissions, etc.) for an
+    /// object. Exact semantics depend on the backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the metadata could not be set.
+    fn set_restore_metadata(&self, node: &Node, opts: &RestoreOptions) -> io::Result<()> {
+        self._writer
+            .ok_or(io::ErrorKind::Unsupported)?
+            .set_restore_metadata(&self.path, node, opts)
+    }
+
+    /// Sets the length of `path` (relative to the base path). Truncates or
+    /// extends an existing file, or creates a new empty file of that
+    /// length if it doesn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parent directory is missing/uncreatable, the
+    /// file could not be opened, or the length could not be set.
+    fn set_length(&self, size: u64) -> io::Result<()> {
+        self._writer
+            .ok_or(io::ErrorKind::Unsupported)?
+            .set_length(&self.path, size)
+    }
+
+    /// Opens `path` for writing (replacing its contents).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file could not be opened, or if `path`
+    /// refers to a directory.
+    fn open_replace(&self) -> io::Result<Box<dyn WriteHandle>> {
+        self._writer
+            .ok_or(io::ErrorKind::Unsupported)?
+            .open_replace(&self.path)
+    }
+
+    /// Writes all bytes in an atomic way.
+    fn write_all(&self, bytes: Bytes) -> io::Result<()> {
+        self._writer
+            .ok_or(io::ErrorKind::Unsupported)?
+            .write_all(&self.path, bytes)
+    }
+
+    /// Writes `data` to `path` at the given byte `offset`. Creates the file
+    /// if it does not already exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file could not be opened/sought, the
+    /// backend does not support random writes (check
+    /// [`can_random_write`](WriteSource::can_random_write) first), or the
+    /// data could not be written.
+    fn write_at(&self, offset: u64, data: &[u8]) -> io::Result<()> {
+        self._writer
+            .ok_or(io::ErrorKind::Unsupported)?
+            .write_at(&self.path, offset, data)
+    }
+
+    /// Consumes this entry, turning it into a `(path, node)` pair suitable
+    /// for insertion into a tree.
+    pub fn as_tree_entry(self) -> (PathBuf, Node) {
+        (self.path, self.node)
+    }
+
+    pub fn metadata(&self) -> &Metadata {
+        &self.metadata
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn is_file(&self) -> bool {
+        self.metadata.is_file()
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.metadata.is_dir()
+    }
+
+    pub fn size(&self) -> u64 {
+        self.metadata.size
+    }
+
+    /// Creates a [`ReadSourceEntry`] from a given path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path to use. Its file name becomes the node's name.
+    /// * `node_type` - The type of node (file, dir, symlink, etc).
+    /// * `metadata` - Metadata for the node.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `path` has no file name component.
+    pub fn new(
+        path: PathBuf,
+        node_type: NodeType,
+        metadata: Metadata,
+        reader: Option<Arc<dyn ReadSource>>,
+        writer: Option<Arc<dyn WriteSource>>,
+    ) -> io::Result<Self> {
+        let name = path
+            .file_name()
+            .ok_or(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Path not allowed: {}", path.clone()),
+            ))?
+            .to_string_lossy()
+            .to_string();
+        Ok(Self {
+            path,
+            name,
+            node_type,
+            metadata,
+            _reader: reader,
+            _writer: writer,
+        })
+    }
+}
+
+/// A readable handle to a source file.
+///
+/// Combines [`Read`] + [`Seek`] with an explicit [`close`](ReadHandle::close)
+/// step for backends that need to perform finalization work.
+pub trait ReadHandle: Read + Seek + Send + Sync {
+    /// Finalizes and closes the handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if finalizing the underlying resource fails.
+    fn close(&mut self) -> io::Result<()>;
+}
+
+/// A writable handle to a destination file.
+///
+/// Combines [`Write`] with an explicit [`close`](WriteHandle::close) step
+/// for backends that need to perform finalization work.
+pub trait WriteHandle: Write + Send + Sync {
+    /// Finalizes and closes the handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if finalizing the underlying resource fails.
+    fn close(&mut self) -> io::Result<()>;
+}
+
+impl ReadHandle for std::fs::File {
+    fn close(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl WriteHandle for std::fs::File {
+    fn close(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Trait for backends that can list entries from a source.
+///
+/// # Dyn-compatibility
+///
+/// `Item` is fixed via the `Iterator` supertrait bound, so no per-impl
+/// associated type — the trait can be used as `Box<dyn FileLister>`.
+/// `close()` takes `self: Box<Self>` for the same reason.
+pub trait FileLister: Iterator<Item = io::Result<File>> + Sync + Send + 'static {
+    /// Returns the size of the source, if known.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the size could not be determined.
+    fn compute_size(&self) -> io::Result<Option<u64>>;
+
+    /// Returns all root paths of the lookup.
+    fn path(&self) -> &Path;
+}
+
+/// Options that control how files and directories are listed.
+///
+/// This configuration allows callers to exclude specific paths, apply
+/// filtering rules, and choose whether the listing should recurse into
+/// subdirectories.
+#[cfg_attr(feature = "clap", derive(clap::Parser))]
+#[cfg_attr(feature = "merge", derive(conflate::Merge))]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Setters, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+#[setters(into)]
+#[non_exhaustive]
+pub struct ListOptions {
+    /// Optional exclusion rules used to skip matching paths during the listing.
+    pub excludes: Option<Excludes>,
+
+    /// Optional filters used to determine which entries are returned.
+    pub filters: Option<FilterOptions>,
+
+    /// Whether to recursively traverse subdirectories.
+    ///
+    /// If `true`, all matching entries within the directory tree are returned.
+    /// If `false`, only the immediate children of the specified directory are listed.
+    pub recursive: bool,
+}
+
+/// A configuration that can be built into a [`ReadSource`].
+///
+/// Implement this for lightweight, serializable descriptions of a source
+/// (e.g. a file path, connection string, or set of credentials) that know
+/// how to construct the actual reader. `build` performs whatever I/O is
+/// necessary (opening a file, connecting to a service, etc.) and returns
+/// the constructed reader.
+///
+/// Any `ReadSourceConfig` automatically implements
+/// `TryInto<Self::Reader, Error = io::Error>` (see the blanket impl below),
+/// so generic code can accept either a config or a ready-made reader.
+pub trait ReadSourceConfig: Serialize + DeserializeOwned + Send + Sync {
+    /// The concrete [`ReadSource`] type this configuration builds.
+    type Reader: ReadSource;
+
+    /// Construct the reader described by this configuration.
+    fn build(self) -> io::Result<Self::Reader>;
+}
+
+/// A configuration that can be built into a [`WriteSource`].
+///
+/// Mirrors [`ReadSourceConfig`] for the write path: a serializable
+/// description of a destination that knows how to construct the actual
+/// writer.
+///
+/// Any `WriteSourceConfig` automatically implements
+/// `TryInto<Self::Writer, Error = io::Error>` (see the blanket impl below),
+/// so generic code can accept either a config or a ready-made writer.
+pub trait WriteSourceConfig: Serialize + DeserializeOwned + Send + Sync {
+    /// The concrete [`WriteSource`] type this configuration builds.
+    type Writer: WriteSource;
+
+    /// Construct the writer described by this configuration.
+    fn build(self) -> io::Result<Self::Writer>;
+}
+
+/// Blanket impl: every [`WriteSourceConfig`] can be fallibly converted into
+///
+/// Trait for a backend that can be read from as a source of files.
+///
+/// # Dyn-compatibility
+///
+/// `Lister` and `Reader` associated types are replaced with
+/// `Box<dyn FileLister>` and `Box<dyn ReadHandle>`, so `dyn ReadSource` can
+/// be used directly.
+pub trait ReadSource: Send + Sync + 'static {
+    /// Returns a human-readable location string for this backend, used for
+    /// logging and error messages.
+    fn location(&self) -> String;
+
+    /// Opens `path` for reading.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file could not be opened.
+    fn open_read(&self, path: &Path) -> io::Result<Box<dyn ReadHandle>>;
+
+    /// Lists all items in the current level. Non-recursive.
+    ///
+    /// # Errors
+    /// Returns an error if the source listing failed.
+    fn readdir(&self, path: &Path)
+    -> io::Result<Box<dyn Iterator<Item = io::Result<Node>> + Send>>;
+
+    /// Returns metadata for `path`, if it exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the metadata could not be retrieved for a
+    /// reason other than the path not existing.
+    fn stat(&self, path: &Path) -> io::Result<Option<Metadata>>;
+
+    /// Returns if the file exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the metadata could not be retrieved for a
+    /// reason other than the path not existing.
+    fn exists(&self, path: &Path) -> io::Result<bool> {
+        self.stat(path).map(|x| x.is_some())
+    }
+}
+
+/// Trait for a backend that can be written to as a restore destination.
+///
+/// Extends [`ReadSource`]; `Writer` associated type replaced with
+/// `Box<dyn WriteHandle>` so `dyn WriteSource` is usable directly.
+pub trait WriteSource: ReadSource + Send + Sync + 'static {
+    /// Removes the given directory (relative to the base path), including
+    /// all of its contents, recursively.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory could not be removed.
+    fn remove_dir(&self, path: &Path) -> io::Result<()>;
+
+    /// Removes the given file (relative to the base path).
+    ///
+    /// If the file is a symlink, only the symlink itself is removed. If the
+    /// path refers to a directory or device, this will fail.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file could not be removed.
+    fn remove_file(&self, path: &Path) -> io::Result<()>;
+
+    /// Creates the given directory (relative to the base path), including
+    /// all necessary parent directories.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the directory could not be created.
+    fn create_dir_all(&self, path: &Path) -> io::Result<()>;
+
+    /// Sets restore-related metadata (timestamps, permissions, etc.) for an
+    /// object. Exact semantics depend on the backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the metadata could not be set.
+    fn set_restore_metadata(
+        &self,
+        path: &Path,
+        node: &Node,
+        opts: &RestoreOptions,
+    ) -> io::Result<()>;
+
+    /// Sets the length of `path` (relative to the base path). Truncates or
+    /// extends an existing file, or creates a new empty file of that
+    /// length if it doesn't exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parent directory is missing/uncreatable, the
+    /// file could not be opened, or the length could not be set.
+    fn set_length(&self, path: &Path, size: u64) -> io::Result<()>;
+
+    /// Opens `path` for writing (replacing its contents).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file could not be opened, or if `path`
+    /// refers to a directory.
+    fn open_replace(&self, path: &Path) -> io::Result<Box<dyn WriteHandle>>;
+
+    /// Writes all bytes in an atomic way.
+    fn write_all(&self, path: &Path, bytes: Bytes) -> io::Result<()>;
+
+    /// Writes `data` to `path` at the given byte `offset`. Creates the file
+    /// if it does not already exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file could not be opened/sought, the
+    /// backend does not support random writes (check
+    /// [`can_random_write`](WriteSource::can_random_write) first), or the
+    /// data could not be written.
+    fn write_at(&self, path: &Path, offset: u64, data: &[u8]) -> io::Result<()>;
+
+    /// Creates a hardlink at `item` pointing to the already-restored file
+    /// at `source_item`, both relative to the base path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the parent directory is missing/uncreatable,
+    /// the hardlink could not be created, or the backend does not support
+    /// hardlinks (check [`can_hard_link`](WriteSource::can_hard_link)
+    /// first).
+    fn hard_link(&self, path: &Path, item: &Path) -> io::Result<()>;
+
+    /// Returns whether this destination supports random-access writes.
+    fn can_random_write(&self) -> bool;
+
+    /// Returns whether this destination supports hard-linking.
+    fn can_hard_link(&self) -> bool;
+}
+
 /// Trait for backends that can read.
 ///
 /// This trait is implemented by all backends that can read data.
+///
+/// # Dyn-compatibility
+///
+/// This trait deliberately has **no associated types**. It used to declare
+/// `type Source: ReadSource;`, but that type was unused anywhere in the
+/// trait's own methods and its presence made `dyn ReadBackend` (and by
+/// extension `dyn WriteBackend`, which extends it and is used throughout
+/// this module as `Arc<dyn WriteBackend>`) impossible to construct. Removing
+/// it costs nothing functionally and restores dyn-compatibility.
 pub trait ReadBackend: Send + Sync + 'static {
-    /// Returns the location of the backend.
+    /// Returns a human-readable location string for this backend, used for
+    /// logging, error messages, and the [`Debug`] impl of `dyn WriteBackend`.
     fn location(&self) -> String;
 
     /// Lists all files with their size of the given type.
@@ -163,9 +594,10 @@ pub trait ReadBackend: Send + Sync + 'static {
     /// Get the warmup path for the given file type and id.
     ///
     /// This method returns a string representing the backend-specific path or identifier
-    /// for a file, which can be used as input to external warm-up commands. Unlike the
-    /// `path()` method which may have different return types for different backends,
-    /// this method must always return a string that can be passed to external programs.
+    /// for a file, which can be used as input to external warm-up commands. Unlike a
+    /// hypothetical `path()` method which may have different return types for different
+    /// backends, this method must always return a string that can be passed to external
+    /// programs.
     ///
     /// This is primarily used for warming up files in cold storage before they are
     /// accessed, where the warm-up command needs to know the specific backend path
@@ -208,6 +640,11 @@ pub trait ReadBackend: Send + Sync + 'static {
 /// # Note
 ///
 /// This trait is used to find the id of a snapshot that contains a given file name.
+///
+/// This trait uses generic methods, so it is not itself dyn-compatible.
+/// That's fine: it's only ever used via the blanket `impl<T: ReadBackend>
+/// FindInBackend for T` below on concrete types, never as `dyn
+/// FindInBackend`.
 pub trait FindInBackend: ReadBackend {
     /// Finds the id of the file starting with the given string.
     ///
@@ -332,7 +769,7 @@ pub trait WriteBackend: ReadBackend {
 mock! {
     pub(crate) Backend {}
 
-    impl ReadBackend for Backend{
+    impl ReadBackend for Backend {
         fn location(&self) -> String;
         fn list_with_size(&self, tpe: FileType) -> RusticResult<Vec<(Id, u32)>>;
         fn read_full(&self, tpe: FileType, id: &Id) -> RusticResult<Bytes>;
@@ -344,7 +781,7 @@ mock! {
             offset: u32,
             length: u32,
         ) -> RusticResult<Bytes>;
-    fn warmup_path(&self, tpe: FileType, id: &Id) -> String;
+        fn warmup_path(&self, tpe: FileType, id: &Id) -> String;
     }
 
     impl WriteBackend for Backend {
@@ -408,130 +845,31 @@ impl Debug for dyn WriteBackend {
     }
 }
 
-/// Information about an entry to be able to open it.
-///
-/// # Type Parameters
-///
-/// * `O` - The type of the open information.
-#[derive(Debug, Clone)]
-pub struct ReadSourceEntry<O> {
-    /// The path of the entry.
-    pub path: PathBuf,
+// /// Trait for backends that can start a read.
+// pub trait ReadSourceConfig:
+//     serde::Serialize + DeserializeOwned + Debug + Sync + Send + Default + 'static
+// {
+//     /// The [`ReadSource`] to create from this builder.
+//     type Reader: FileLister;
 
-    /// The node information of the entry.
-    pub node: Node,
-
-    /// Information about how to open the entry.
-    pub open: Option<O>,
-}
-
-impl<O> ReadSourceEntry<O> {
-    /// Creates a [`ReadSourceEntry`] from a given path.
-    ///
-    /// # Arguments
-    /// * `path` - The path to use.
-    /// * `open` - A valid way to create a handle.
-    pub fn from_path(path: PathBuf, open: Option<O>) -> BackendResult<Self> {
-        let node = Node::new_node(
-            path.file_name()
-                .ok_or_else(|| BackendErrorKind::PathNotAllowed(path.clone()))?,
-            NodeType::File,
-            Metadata::default(),
-        );
-        Ok(Self { path, node, open })
-    }
-
-    /// Turn this into a tree entry
-    pub fn as_tree_entry(self) -> (PathBuf, Node) {
-        (self.path, self.node)
-    }
-}
-
-/// Ability for a backend to read a file from beginning to end.
-pub trait ReadFileOpen {
-    /// The Reader used for this source
-    type Reader: Read + Send + Sync + 'static;
-
-    /// Opens the source.
-    ///
-    /// # Errors
-    ///
-    /// * If the source could not be opened.
-    ///
-    /// # Result
-    ///
-    /// The reader used to read from the source.
-    fn open(self) -> RusticResult<Self::Reader>;
-}
-
-pub trait SeekFileOpen: ReadFileOpen<Reader: Seek> {}
-
-pub trait WriteHandle: Write + Send + Sync + 'static {
-    fn close(&mut self) -> RusticResult<()>;
-}
-
-pub trait WriteFileOpen {
-    /// The Writer used for this source.
-    type Writer: WriteHandle;
-
-    /// Opens the source. A file will be created if not exist.
-    ///
-    /// # Errors
-    ///
-    /// * If the source could not be opened.
-    ///
-    /// # Result
-    ///
-    /// The reader used to read from the source.
-    fn open_replace(self) -> RusticResult<Self::Writer>;
-}
-
-impl WriteHandle for File {
-    fn close(&mut self) -> RusticResult<()> {
-        Ok(())
-    }
-}
-
-/// Trait for backends that can be restored to.
-pub trait DestinationBuilder:
-    serde::Serialize + DeserializeOwned + Debug + Send + Sync + Default + 'static
-{
-    /// The [`Destination`] to create from this builder.
-    type Output: Destination;
-
-    /// Opens a [`Destination`] for the specified config.
-    ///
-    /// # Errors
-    ///
-    /// If the backend fails to initialize writing.
-    fn get_destination(&self) -> RusticResult<Self::Output>;
-}
-
-/// Trait for backends that can start a read.
-pub trait ReadSourceBuilder:
-    serde::Serialize + DeserializeOwned + Debug + Sync + Send + Default + 'static
-{
-    /// The [`ReadSource`] to create from this builder.
-    type Reader: ReadSource;
-
-    /// Opens a [`ReadSource`] for the specified path and options.
-    ///
-    /// # Errors
-    ///
-    /// If the backend fails to initialize reading.
-    fn get_reader(&self) -> RusticResult<Self::Reader>;
-}
+//     /// Opens a [`ReadSource`] for the specified path and options.
+//     ///
+//     /// # Errors
+//     ///
+//     /// If the backend fails to initialize reading.
+//     fn get_reader(&self) -> RusticResult<Self::Reader>;
+// }
 
 /// Trait for repository backends.
-pub trait RepositoryConfig: Debug + Send + Sync {
+pub trait BackendConfig: Debug + Send + Sync {
     /// # Returns
     ///
-    /// A string [`Path`] of the [`RepositoryConfig`].
+    /// A string [`Path`] of the [`BackendConfig`].
     fn get_path(&self) -> Option<String>;
 
     /// # Returns
     ///
-    /// All dynamic options of this [`RepositoryConfig`]. It should de-serialize correctly.
+    /// All dynamic options of this [`BackendConfig`]. It should de-serialize correctly.
     fn get_options(&self) -> HashMap<String, String>;
 
     /// # Returns
@@ -541,66 +879,15 @@ pub trait RepositoryConfig: Debug + Send + Sync {
     /// # Errors
     /// * If the backend could not be created.
     /// * If the configuration is invalid.
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>>;
-}
-
-/// blanket implementation for readers
-impl<T: Read + Send + Sync + 'static> ReadFileOpen for T {
-    type Reader = T;
-
-    fn open(self) -> RusticResult<Self::Reader> {
-        Ok(self)
-    }
-}
-
-impl<T> SeekFileOpen for T
-where
-    T: ReadFileOpen,
-    T::Reader: Seek,
-{
-}
-
-/// Trait for backends that can read from a source.
-///
-/// This trait is implemented by all backends that can read data from a source.
-pub trait ReadSource: Sync + Send {
-    /// The type used to handle open source files
-    type Open: ReadFileOpen;
-    /// The iterator we use to iterate over the source entries
-    type Iter: Iterator<Item = RusticResult<ReadSourceEntry<Self::Open>>>;
-
-    /// Returns the size of the source.
-    ///
-    /// # Errors
-    ///
-    /// * If the size could not be determined.
-    ///
-    /// # Returns
-    ///
-    /// The size of the source, if it is known.
-    fn size(&self) -> RusticResult<Option<u64>>;
-
-    /// # Returns
-    ///
-    /// An [`Iterator`] over the entries of the source.
-    fn entries(&self) -> Self::Iter;
-
-    /// # Returns
-    ///
-    /// All roots of the lookup. Some may not exist due to filters.
-    fn paths(&self) -> Vec<PathBuf>;
-
-    /// Closes the [`ReadSource`] and consumes itself.
-    fn close(self) -> RusticResult<()>;
+    fn get_source(&self) -> RusticResult<Arc<dyn WriteSource>>;
 }
 
 /// The backends a repository can be initialized and operated on
 ///
 /// # Note
 ///
-/// This struct is used to initialize a [`Repository`].
+/// This struct is used to initialize a [`Repository`](crate::Repository).
 ///
-/// [`Repository`]: crate::Repository
 #[derive(Debug, Clone)]
 pub struct RepositoryBackends {
     /// The main repository of this [`RepositoryBackends`].
@@ -617,10 +904,10 @@ impl RepositoryBackends {
     ///
     /// * `repository` - The main repository of this [`RepositoryBackends`].
     /// * `repo_hot` - The hot repository of this [`RepositoryBackends`].
-    pub fn new(repository: Arc<dyn WriteBackend>, repo_hot: Option<Arc<dyn WriteBackend>>) -> Self {
+    pub fn new(repository: Arc<dyn WriteBackend>) -> Self {
         Self {
             repository,
-            repo_hot,
+            repo_hot: None,
         }
     }
 

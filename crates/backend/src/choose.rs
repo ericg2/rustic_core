@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::{collections::BTreeMap, sync::Arc};
 use strum::{Display, EnumString};
 
-use rustic_core::{BackendOptions, ErrorKind, RepositoryBackends, RepositoryConfig, RusticError, RusticResult, WriteBackend};
+use rustic_core::{BackendConfig, BackendOptions, ErrorKind, RepositoryBackends, RusticError, RusticResult, WriteBackend, WriteSource};
 
 use crate::util::{BackendLocation, location_to_type_and_path};
 
@@ -104,12 +104,13 @@ pub enum SupportedBackend {
     OpenDAL,
 }
 
-impl SupportedBackend {
-    fn map_config(
+
+impl BackendChoice for SupportedBackend {
+    fn to_backend(
         &self,
         location: BackendLocation,
         options: Option<BTreeMap<String, String>>,
-    ) -> RusticResult<Arc<dyn RepositoryConfig>> {
+    ) -> RusticResult<Arc<dyn WriteBackend>> {
         let options = options.unwrap_or_default();
         Ok(match self {
             Self::Local => Arc::new(LocalConfig::from_iter(location, options)),
@@ -120,17 +121,6 @@ impl SupportedBackend {
             #[cfg(feature = "opendal")]
             Self::OpenDAL => Arc::new(OpenDALConfig::from_iter(location, options)),
         })
-    }
-}
-
-impl BackendChoice for SupportedBackend {
-    fn to_backend(
-        &self,
-        location: BackendLocation,
-        options: Option<BTreeMap<String, String>>,
-    ) -> RusticResult<Arc<dyn WriteBackend>> {
-        let map = self.map_config(location, options)?;
-        map.get_repo()
     }
 }
 

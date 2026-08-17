@@ -16,7 +16,7 @@ use crate::{
         file_archiver::FileArchiver, parent::Parent, tree::TreeIterator,
         tree_archiver::TreeArchiver,
     },
-    backend::{ReadSource, ReadSourceEntry, decrypt::DecryptFullBackend},
+    backend::{FileLister, File, decrypt::DecryptFullBackend},
     blob::BlobType,
     error::RusticResult,
     index::{
@@ -125,24 +125,20 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
     /// * If the time is not in the range of `Local::now()`.
     pub fn archive<R>(
         mut self,
-        src: &R,
+        src: &impl FileLister,
         as_path: Option<&PathBuf>,
         skip_identical_parent: bool,
         no_scan: bool,
         p: &Progress,
         token: CancelToken,
     ) -> RusticResult<SnapshotFile>
-    where
-        R: ReadSource + 'static,
-        <R as ReadSource>::Open: Send,
-        <R as ReadSource>::Iter: Send,
     {
         token.check()?;
         scope(|s| -> RusticResult<_> {
             // determine backup size in parallel to running backup
             let src_size_handle = s.spawn(|| {
                 if !no_scan && !p.is_hidden() {
-                    match src.size() {
+                    match src.compute_size() {
                         Ok(Some(size)) => p.set_length(size),
                         Ok(None) => {}
                         Err(err) => warn!("error determining backup size: {}", err.display_log()),
@@ -151,27 +147,27 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
             });
 
             // filter out errors and handle as_path
-            let iter = src.entries().filter_map(|item| match item {
+            let iter = src.filter_map(|item| match item {
                 Err(err) => {
                     warn!("ignoring error: {}", err.display_log());
                     None
                 }
-                Ok(ReadSourceEntry { path, node, open }) => {
+                Ok(file) => {
+                    let path = file.path();
                     let snapshot_path = if let Some(as_path) = as_path {
                         crate::join_force(&as_path, &path)
                     } else {
-                        path
+                        path.to_path_buf()
                     };
-                    Some(if node.is_dir() {
-                        (snapshot_path, node, open)
+                    Some(if file.is_dir() {
+                        (snapshot_path, file)
                     } else {
                         (
                             snapshot_path
                                 .parent()
                                 .unwrap_or(&Path::new(""))
                                 .to_path_buf(),
-                            node,
-                            open,
+                            file,
                         )
                     })
                 }

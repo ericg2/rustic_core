@@ -1,4 +1,5 @@
-use std::io::Read;
+use std::io::{self, Read};
+use std::path::Path;
 use std::time::Duration;
 
 use crate::rest::config::RestConfig;
@@ -11,7 +12,10 @@ use reqwest::{
     blocking::{Client, ClientBuilder},
     header::HeaderMap,
 };
-use rustic_core::{ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult, WriteBackend};
+use rustic_core::{
+    ErrorKind, FileType, Id, Metadata, Node, ReadBackend, ReadHandle, ReadSource, RusticError,
+    RusticResult, WriteBackend, WriteSource,
+};
 use serde::Deserialize;
 
 /// joining URL failed on: `{0}`
@@ -48,7 +52,7 @@ fn map_duration(d: &SignedDuration) -> Duration {
 
 /// A backend implementation that uses REST to access the backend.
 #[derive(Clone, Debug)]
-pub(crate) struct RestBackend {
+pub struct RestBackend {
     /// The url of the backend.
     url: Url,
     /// The client to use.

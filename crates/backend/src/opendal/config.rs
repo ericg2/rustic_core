@@ -24,9 +24,9 @@ use derive_setters::Setters;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
-use rustic_core::{ErrorKind, RepositoryConfig, RusticError, RusticResult, WriteBackend};
+use rustic_core::{BackendConfig, ErrorKind, RusticError, RusticResult, WriteBackend, WriteSource};
 
-use crate::opendal::OpenDALBackend;
+use crate::opendal::OpenDALSource;
 
 /// Throttling parameters for an OpenDAL backend, expressed as a token-bucket
 /// rate limiter: a sustained `bandwidth` (bytes/sec) and a `burst` capacity
@@ -218,25 +218,19 @@ impl OpenDALConfig {
             retry,
         }
     }
+
+    pub fn build(self) -> RusticResult<OpenDALSource> {
+        OpenDALSource::from_config(&self)
+    }
 }
 
-impl RepositoryConfig for OpenDALConfig {
+impl BackendConfig for OpenDALConfig {
     /// Returns the config "path" as `opendal:<scheme>`, or [`None`] if no
     /// scheme is set.
     fn get_path(&self) -> Option<String> {
         self.scheme.as_ref().map(|x| format!("opendal:{}", x))
     }
 
-    /// Flattens this config into string key/value pairs, as consumed by
-    /// `opendal`.
-    ///
-    /// `"throttle"` and `"connections"` are included only when set;
-    /// `"retry"` is always included (defaulting to `"default"`). All
-    /// remaining entries of [`OpenDALConfig::options`] are merged in
-    /// afterwards, so they take precedence over the typed fields' encoded
-    /// values if the keys should ever collide.
-    ///
-    /// This is the inverse of [`OpenDALConfig::from_iter`].
     fn get_options(&self) -> HashMap<String, String> {
         let mut ret = HashMap::new();
         if let Some(throttle) = self.throttle {
@@ -260,10 +254,8 @@ impl RepositoryConfig for OpenDALConfig {
         ret
     }
 
-    /// Builds the underlying `opendal`-backed [`WriteBackend`] for this
-    /// config.
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-        let ret = Arc::new(OpenDALBackend::new(&self)?);
-        Ok(ret)
+    fn get_source(&self) -> RusticResult<Arc<dyn WriteSource>> {
+        let be = OpenDALSource::from_config(config)?;
+        Ok(Arc::new(be))
     }
 }

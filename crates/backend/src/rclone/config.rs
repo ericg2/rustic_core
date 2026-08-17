@@ -1,6 +1,6 @@
 use crate::rclone::backend::RcloneBackend;
 use derive_setters::Setters;
-use rustic_core::{RepositoryConfig, RusticResult, WriteBackend};
+use rustic_core::{BackendConfig, RusticResult, WriteBackend};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ impl RcloneConfig {
     }
 }
 
-impl RepositoryConfig for RcloneConfig {
+impl BackendConfig for RcloneConfig {
     fn get_path(&self) -> Option<String> {
         self.url.clone().map(|x| format!("rclone:{}", &x))
     }
@@ -85,7 +85,7 @@ impl RepositoryConfig for RcloneConfig {
     }
 
     fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-        let ret = RcloneBackend::new(&self)?;
+        let ret = RcloneBackend::from_config(&self)?;
         Ok(Arc::new(ret))
     }
 }

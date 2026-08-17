@@ -6,11 +6,11 @@ use log::info;
 use std::path::PathBuf;
 
 use path_dedot::ParseDot;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    CancelToken, ReadSource,
+    CancelToken, FileLister,
     archiver::{Archiver, parent::Parent},
     error::{ErrorKind, RusticError, RusticResult},
     repofile::{
@@ -199,12 +199,12 @@ pub(crate) fn backup<R, S>(
 ) -> RusticResult<SnapshotFile>
 where
     S: IndexedIds,
-    R: ReadSource + 'static,
-    <R as ReadSource>::Open: Send,
-    <R as ReadSource>::Iter: Send,
+    R: FileLister + 'static,
+    <R as FileLister>::Open: Send,
+    <R as FileLister>::Iter: Send,
 {
     let index = repo.index();
-    let backup_paths = src.paths();
+    let backup_paths = src.roots();
     let as_path = opts
         .as_path
         .as_ref()

@@ -1,3 +1,5 @@
+use std::io;
+
 use derive_setters::Setters;
 use ignore::overrides::{Override, OverrideBuilder};
 use serde::{Deserialize, Serialize};
@@ -39,99 +41,47 @@ impl Excludes {
     pub fn is_empty(&self) -> bool {
         self == &Self::default()
     }
-
+    
     /// Returns the current [`Excludes`] as an [`Override`].
-    pub fn as_override(&self) -> RusticResult<Override> {
+    pub fn as_override(&self) -> io::Result<Override> {
         let mut override_builder = OverrideBuilder::new("");
+    
         for g in &self.globs {
-            _ = override_builder.add(g).map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::Internal,
-                    "Failed to add glob pattern `{glob}` to override builder.",
-                    err,
-                )
-                .attach_context("glob", g)
-                .ask_report()
-            })?;
+            _ = override_builder
+                .add(g)
+                .map_err(|err| io::Error::other(err.to_string()))?;
         }
-
+    
         for file in &self.glob_files {
-            for line in std::fs::read_to_string(file)
-                .map_err(|err| {
-                    RusticError::with_source(
-                        ErrorKind::Internal,
-                        "Failed to read string from glob file `{glob_file}` ",
-                        err,
-                    )
-                    .attach_context("glob_file", file)
-                    .ask_report()
-                })?
-                .lines()
-            {
-                _ = override_builder.add(line).map_err(|err| {
-                    RusticError::with_source(
-                        ErrorKind::Internal,
-                        "Failed to add glob pattern line `{glob_pattern_line}` to override builder.",
-                        err,
-                    )
-                    .attach_context("glob_pattern_line", line.to_string())
-                    .ask_report()
-                })?;
+            for line in std::fs::read_to_string(file)?.lines() {
+                _ = override_builder
+                    .add(line)
+                    .map_err(|err| io::Error::other(err.to_string()))?;
             }
         }
-
-        _ = override_builder.case_insensitive(true).map_err(|err| {
-            RusticError::with_source(
-                ErrorKind::Internal,
-                "Failed to set case insensitivity in override builder.",
-                err,
-            )
-            .ask_report()
-        })?;
+    
+        _ = override_builder
+            .case_insensitive(true)
+            .map_err(|err| io::Error::other(err.to_string()))?;
+    
         for g in &self.iglobs {
-            _ = override_builder.add(g).map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::Internal,
-                    "Failed to add iglob pattern `{iglob}` to override builder.",
-                    err,
-                )
-                .attach_context("iglob", g)
-                .ask_report()
-            })?;
+            _ = override_builder
+                .add(g)
+                .map_err(|err| io::Error::other(err.to_string()))?;
         }
-
+    
         for file in &self.iglob_files {
-            for line in std::fs::read_to_string(file)
-                .map_err(|err| {
-                    RusticError::with_source(
-                        ErrorKind::Internal,
-                        "Failed to read string from iglob file `{iglob_file}`",
-                        err,
-                    )
-                    .attach_context("iglob_file", file)
-                    .ask_report()
-                })?
-                .lines()
-            {
-                _ = override_builder.add(line).map_err(|err| {
-                    RusticError::with_source(
-                        ErrorKind::Internal,
-                        "Failed to add iglob pattern line `{iglob_pattern_line}` to override builder.",
-                        err,
-                    )
-                    .attach_context("iglob_pattern_line", line.to_string())
-                    .ask_report()
-                })?;
+            for line in std::fs::read_to_string(file)?.lines() {
+                _ = override_builder
+                    .add(line)
+                    .map_err(|err| io::Error::other(err.to_string()))?;
             }
         }
-        let overrides = override_builder.build().map_err(|err| {
-            RusticError::with_source(
-                ErrorKind::Internal,
-                "Failed to build matcher for a set of glob overrides.",
-                err,
-            )
-            .ask_report()
-        })?;
+    
+        let overrides = override_builder
+            .build()
+            .map_err(|err| io::Error::other(err.to_string()))?;
+    
         Ok(overrides)
     }
 }

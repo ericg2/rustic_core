@@ -1,12 +1,11 @@
 //! `restore` subcommand
 
-use crate::backend::SeekFileOpen;
 use derive_setters::Setters;
 use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
 use crate::{
-    CancelToken, Destination, ReadFileOpen, ReadSourceEntry, WriteFileOpen, WriteHandle,
+    CancelToken, File, FileLister, WriteHandle, WriteSource,
     backend::{
         FileType, ReadBackend,
         decrypt::DecryptReadBackend,
@@ -122,7 +121,7 @@ pub(crate) fn restore_repository<S: IndexedTree>(
     repo: &Repository<S>,
     opts: RestoreOptions,
     node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
-    dest: &impl Destination,
+    dest: &impl WriteSource,
     token: CancelToken,
 ) -> RusticResult<()> {
     token.check()?;
@@ -173,21 +172,18 @@ pub(crate) fn restore_repository<S: IndexedTree>(
 /// * If a directory could not be created.
 /// * If the restore information could not be collected.
 #[allow(clippy::too_many_lines)]
-pub(crate) fn collect_and_prepare<S, D, N, W, O>(
+pub(crate) fn collect_and_prepare<S, W>(
     repo: &Repository<S>,
     opts: RestoreOptions,
-    mut node_streamer: N,
+    mut node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
     mut walker: W,
-    dest: &D,
+    dest: &impl WriteSource,
     dry_run: bool,
     token: CancelToken,
 ) -> RusticResult<RestorePlan>
 where
     S: IndexedFull,
-    D: Destination,
-    N: Iterator<Item = RusticResult<(PathBuf, Node)>>,
-    W: Iterator<Item = RusticResult<ReadSourceEntry<O>>>,
-    O: ReadFileOpen,
+    W: FileLister,
 {
     token.check()?;
 
@@ -209,7 +205,7 @@ where
         .to_path_buf()
     };
 
-    let next_entry = |walker: &mut W| -> Option<ReadSourceEntry<O>> {
+    let next_entry = |walker: &mut W| -> Option<File<O>> {
         walker
             .inspect(|r| {
                 if let Err(err) = r {
@@ -231,54 +227,53 @@ where
             })
     };
 
-    let mut process_existing =
-        |walker: &mut W, entry: &ReadSourceEntry<O>| -> RusticResult<Option<ReadSourceEntry<O>>> {
-            if clean_path(&entry.path) == clean_path(Path::new("/")) {
-                // don't process the root dir which should be existing
-                return Ok(next_entry(walker));
-            }
+    let mut process_existing = |walker: &mut W, entry: &File| -> RusticResult<Option<File>> {
+        if clean_path(&entry.path) == clean_path(Path::new("/")) {
+            // don't process the root dir which should be existing
+            return Ok(next_entry(walker));
+        }
 
-            debug!("additional {}", entry.path.display());
-            let is_dir = entry.node.is_dir();
-            if is_dir {
-                stats.dirs.additional += 1;
-            } else {
-                stats.files.additional += 1;
+        debug!("additional {}", entry.path.display());
+        let is_dir = entry.node.is_dir();
+        if is_dir {
+            stats.dirs.additional += 1;
+        } else {
+            stats.files.additional += 1;
+        }
+        match (opts.delete, dry_run, is_dir) {
+            (true, true, true) => {
+                info!(
+                    "would have removed the additional dir: {}",
+                    entry.path.display()
+                );
             }
-            match (opts.delete, dry_run, is_dir) {
-                (true, true, true) => {
-                    info!(
-                        "would have removed the additional dir: {}",
-                        entry.path.display()
-                    );
-                }
-                (true, true, false) => {
-                    info!(
-                        "would have removed the additional file: {}",
-                        entry.path.display()
-                    );
-                }
-                (true, false, true) => {
-                    if let Err(err) = dest.remove_dir(&entry.path) {
-                        error!("error removing {}: {err}", entry.path.display());
-                    }
-                }
-                (true, false, false) => {
-                    if let Err(err) = dest.remove_file(&entry.path) {
-                        error!("error removing {}: {err}", entry.path.display());
-                    }
-                }
-                (false, _, _) => {
-                    additional_existing = true;
+            (true, true, false) => {
+                info!(
+                    "would have removed the additional file: {}",
+                    entry.path.display()
+                );
+            }
+            (true, false, true) => {
+                if let Err(err) = dest.remove_dir(&entry.path) {
+                    error!("error removing {}: {err}", entry.path.display());
                 }
             }
+            (true, false, false) => {
+                if let Err(err) = dest.remove_file(&entry.path) {
+                    error!("error removing {}: {err}", entry.path.display());
+                }
+            }
+            (false, _, _) => {
+                additional_existing = true;
+            }
+        }
 
-            // don't descend into extra dirs
-            if is_dir {
-                let _ = skip_dirs.insert(entry.path.clone());
-            }
-            Ok(next_entry(walker))
-        };
+        // don't descend into extra dirs
+        if is_dir {
+            let _ = skip_dirs.insert(entry.path.clone());
+        }
+        Ok(next_entry(walker))
+    };
 
     let mut process_node = |path: &PathBuf, node: &Node, exists: bool| -> RusticResult<_> {
         match node.node_type {
@@ -424,7 +419,7 @@ fn restore_metadata(
     mut node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
     hardlink_candidates: &BTreeMap<HardlinkKey, PathBuf>,
     opts: RestoreOptions,
-    dest: &impl Destination,
+    dest: &impl WriteSource,
     token: CancelToken,
 ) -> RusticResult<()> {
     let mut dir_stack: Vec<(PathBuf, Node)> = Vec::new();
@@ -462,18 +457,43 @@ fn restore_metadata(
                         break;
                     }
                     let (path, node) = dir_stack.pop().unwrap();
-                    dest.set_restore_metadata(&path, &node, &opts)?;
+                    dest.set_restore_metadata(&path, &node, &opts)
+                        .map_err(|err| {
+                            RusticError::with_source(
+                                ErrorKind::InputOutput,
+                                "Failed to set metadata for `{path}`",
+                                err,
+                            )
+                            .attach_context("path", path.display().to_string())
+                        })?;
                 }
                 // push current path to the stack
                 dir_stack.push((path, node));
             }
-            _ => dest.set_restore_metadata(&path, &node, &opts)?,
+            _ => dest
+                .set_restore_metadata(&path, &node, &opts)
+                .map_err(|err| {
+                    RusticError::with_source(
+                        ErrorKind::InputOutput,
+                        "Failed to set metadata for `{path}`",
+                        err,
+                    )
+                    .attach_context("path", path.display().to_string())
+                })?,
         }
     }
 
     // empty dir stack and set metadata
     for (path, node) in dir_stack.into_iter().rev() {
-        dest.set_restore_metadata(&path, &node, &opts)?;
+        dest.set_restore_metadata(&path, &node, &opts)
+            .map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::InputOutput,
+                    "Failed to set metadata for `{path}`",
+                    err,
+                )
+                .attach_context("path", path.display().to_string())
+            })?;
     }
 
     Ok(())
@@ -524,7 +544,7 @@ struct AppendState {
 #[allow(clippy::too_many_lines)]
 fn restore_contents<S: Open>(
     repo: &Repository<S>,
-    dest: &impl Destination,
+    dest: &impl WriteSource,
     filenames: &Filenames,
     file_lengths: Vec<u64>,
     restore_info: RestoreInfo,
@@ -819,7 +839,7 @@ impl RestorePlan {
     /// * If the file could not be added.
     fn add_file<S: IndexedFull>(
         &mut self,
-        dest: &impl Destination,
+        dest: &impl WriteSource,
         file: &Node,
         name: PathBuf,
         repo: &Repository<S>,

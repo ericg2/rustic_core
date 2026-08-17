@@ -16,8 +16,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use derive_setters::Setters;
 use ignore::Match;
 use ignore::overrides::Override;
-use serde::{Deserialize, Deserializer};
-use serde_derive::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     backend::{

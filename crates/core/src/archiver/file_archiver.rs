@@ -7,7 +7,6 @@ use crate::{
         tree_archiver::TreeItem,
     },
     backend::{
-        ReadFileOpen,
         decrypt::DecryptWriteBackend,
         node::{Node, NodeType},
     },

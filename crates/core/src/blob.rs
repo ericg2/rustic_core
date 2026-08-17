@@ -4,7 +4,7 @@ pub(crate) mod tree;
 use std::{cmp::Ordering, num::NonZeroU32};
 
 use enum_map::{Enum, EnumMap};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use smallvec::{SmallVec, smallvec};
 
 use crate::define_new_id_struct;

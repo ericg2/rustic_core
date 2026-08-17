@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use crate::{RepositoryBackends, RepositoryConfig, RusticResult};
+use crate::{RepositoryBackends, BackendConfig, RusticResult};
 
 #[cfg(feature = "clap")]
 use clap::ValueHint;
@@ -60,7 +60,7 @@ impl BackendOptions {
     ///
     /// # Important
     /// This will automatically set the configuration. Do not use `options`.
-    pub fn with_repo(mut self, repo: &impl RepositoryConfig) -> Self {
+    pub fn with_repo(mut self, repo: &impl BackendConfig) -> Self {
         self.repository = repo.get_path();
         self.options_cold = repo.get_options().into_iter().collect();
         self
@@ -70,7 +70,7 @@ impl BackendOptions {
     ///
     /// # Important
     /// This will automatically set the configuration. Do not use `options`.
-    pub fn with_repo_hot(mut self, repo: &impl RepositoryConfig) -> Self {
+    pub fn with_repo_hot(mut self, repo: &impl BackendConfig) -> Self {
         self.repository = repo.get_path();
         self.options_hot = repo.get_options().into_iter().collect();
         self

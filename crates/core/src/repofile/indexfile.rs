@@ -2,7 +2,7 @@ use crate::{blob::BlobLocation, repofile::RusticTime};
 use std::{cmp::Ordering, num::NonZeroU32};
 
 use jiff::Timestamp;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, skip_serializing_none};
 
 use crate::{

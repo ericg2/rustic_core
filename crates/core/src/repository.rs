@@ -19,13 +19,11 @@ use log::info;
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    CancelToken, DestinationBuilder, ReadSource, ReadSourceBuilder, RepositoryBackends,
-    RusticError,
+    CancelToken, FileLister, RepositoryBackends, RusticError, WriteSource,
     backend::{
         FileType, FindInBackend, ReadBackend, WriteBackend,
         cache::{Cache, CachedBackend},
         decrypt::{DecryptBackend, DecryptReadBackend, DecryptWriteBackend},
-        dest::Destination,
         hotcold::HotColdBackend,
         node::Node,
         warm_up::WarmUpAccessBackend,
@@ -90,7 +88,9 @@ mod constants {
 #[serde_as]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 #[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, Setters, Eq, PartialEq, Hash)]
+#[derive(
+    Clone, Debug, Default, serde::Deserialize, serde::Serialize, Setters, Eq, PartialEq, Hash,
+)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 #[setters(into, strip_option)]
 #[non_exhaustive]
@@ -145,6 +145,22 @@ pub struct RepositoryOptions {
     #[cfg_attr(feature = "clap", clap(long, global = true))]
     #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub warm_up_batch: Option<usize>,
+
+    /// Post delete command input.
+    #[cfg_attr(
+        feature = "clap",
+        clap(long, global = true, conflicts_with = "post_delete",)
+    )]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
+    pub post_delete_command: Option<String>,
+
+    /// Post create command input.
+    #[cfg_attr(
+        feature = "clap",
+        clap(long, global = true, conflicts_with = "post_create",)
+    )]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
+    pub post_create_command: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -222,7 +238,6 @@ impl Repository<()> {
     ) -> RusticResult<Self> {
         let mut be = backends.repository();
         let be_hot = backends.repo_hot();
-
         if let Some(warm_up) = &opts.warm_up_command {
             let _ = warm_up.uses_plural_placeholders()?;
 
@@ -398,10 +413,10 @@ impl<S> Repository<S> {
                 hot_keys.sort_unstable_by_key(|key| key.0);
                 if keys != hot_keys {
                     return Err(RusticError::new(
-                    ErrorKind::Key,
-                    "Keys of hot and cold repositories don't match for `{name}`. Please check the keys.",
-                )
-                .attach_context("name", self.name.clone()));
+                        ErrorKind::Key,
+                        "Keys of hot and cold repositories don't match for `{name}`. Please check the keys.",
+                    )
+                    .attach_context("name", self.name.clone()));
                 }
             }
         } else {
@@ -1321,7 +1336,7 @@ impl<S: Open> Repository<S> {
     /// * `modification` - The modification(s) to apply to each snapshot
     /// * `remove` - If true, remove old snapshots
     /// * `dry_run` - If true, only print what would be done
-    ///  
+    ///
     /// # Errors
     ///
     // TODO: Document errors
@@ -1602,11 +1617,10 @@ impl<S: IndexedTree> Repository<S> {
         restore_infos: RestorePlan,
         opts: &RestoreOptions,
         node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
-        dest: &impl DestinationBuilder,
+        dest: &impl WriteSource,
         token: CancelToken,
     ) -> RusticResult<()> {
-        let dest = dest.get_destination()?;
-        restore_repository(restore_infos, self, *opts, node_streamer, &dest, token)
+        restore_repository(restore_infos, self, *opts, node_streamer, dest, token)
     }
 
     /// Merge the given trees.
@@ -1680,7 +1694,7 @@ impl<S: IndexedIds> Repository<S> {
     // TODO: Document errors
     ///
     /// # Returns
-    ///  
+    ///
     /// The saved snapshot.
     pub fn backup<R>(
         &self,
@@ -1690,9 +1704,9 @@ impl<S: IndexedIds> Repository<S> {
         token: CancelToken,
     ) -> RusticResult<SnapshotFile>
     where
-        R: ReadSourceBuilder + 'static,
-        <<R as ReadSourceBuilder>::Reader as ReadSource>::Iter: Send,
-        <<R as ReadSourceBuilder>::Reader as ReadSource>::Open: Send,
+        R: ReadSourceConfig + 'static,
+        <<R as ReadSourceConfig>::Reader as FileLister>::Iter: Send,
+        <<R as ReadSourceConfig>::Reader as FileLister>::Open: Send,
     {
         commands::backup::backup(self, opts, source.get_reader()?, snap, token)
     }
@@ -1794,7 +1808,7 @@ impl<S: IndexedFull> Repository<S> {
         &self,
         opts: &RestoreOptions,
         node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
-        dest: &impl DestinationBuilder,
+        dest: &impl DestinationConfig,
         dry_run: bool,
         token: CancelToken,
     ) -> RusticResult<RestorePlan> {
@@ -1842,7 +1856,7 @@ impl<S: IndexedFull> Repository<S> {
     /// * `opts` - The options to use
     /// * `snapshots` - The snapshots to repair
     /// * `dry_run` - If true, only print what would be done
-    ///  
+    ///
     /// # Warning
     ///
     /// * If you remove the original snapshots, you may loose data!
@@ -1870,7 +1884,7 @@ impl<S: IndexedFull> Repository<S> {
     /// * `excludes` - The excludes to apply to each snapshot tree
     /// * `remove` - If true, remove old snapshots
     /// * `dry_run` - If true, only print what would be done
-    ///  
+    ///
     /// # Warning
     ///
     /// * If you remove the original snapshots, you may loose data!

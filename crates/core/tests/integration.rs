@@ -60,7 +60,7 @@ use tempfile::{TempDir, tempdir};
 
 use rustic_core::{
     CommandInput, ConfigOptions, CredentialOptions, Credentials, IndexedFull, IndexedFullStatus,
-    KeyOptions, OpenStatus, PathList, Repository, RepositoryBackends, RepositoryConfig,
+    KeyOptions, OpenStatus, PathList, Repository, RepositoryBackends, BackendConfig,
     RepositoryOptions, repofile::MasterKey,
 };
 use rustic_testing::backend::in_memory_backend::InMemoryBackend;

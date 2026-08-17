@@ -28,7 +28,7 @@ pub(super) mod constants {
 
 /// `RcloneBackend` is a backend that uses rclone to access a remote backend.
 #[derive(Debug)]
-pub(crate) struct RcloneBackend {
+pub struct RcloneBackend {
     /// The REST backend.
     rest: RestBackend,
     /// The url of the backend.
@@ -146,7 +146,7 @@ impl RcloneBackend {
     /// * If the rclone command is not found.
     // TODO: This should be an error, not a panic.
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn new(config: &RcloneConfig) -> RusticResult<Self> {
+    pub fn from_config(config: &RcloneConfig) -> RusticResult<Self> {
         let url = config.url.clone().ok_or(RusticError::new(
             ErrorKind::Configuration,
             "URL is invalid or does not exist",
@@ -173,22 +173,22 @@ impl RcloneBackend {
 
         let user = Alphanumeric.sample_string(&mut rng(), 12);
         let password = Alphanumeric.sample_string(&mut rng(), 12);
-
-        let rclone_command = rclone_command
+        let mut rclone_command = rclone_command
             .map(|x| x.clone())
-            .unwrap_or(DEFAULT_COMMAND.to_string());
-        let mut rclone_command: CommandInput = rclone_command.parse().map_err(
-            |err| RusticError::with_source(
-                ErrorKind::InvalidInput,
-                "Expected rclone command to be valid, but it was not. Please check the configuration file.",
-                err,
-            )
+            .unwrap_or(DEFAULT_COMMAND.to_string())
+            .parse::<CommandInput>()
+            .map_err(
+                |err| RusticError::with_source(
+                    ErrorKind::InvalidInput,
+                    "Expected rclone command to be valid, but it was not. Please check the configuration file.",
+                    err,
+                )
         )?;
+        
         rclone_command.append_arg(url.to_string());
         debug!("starting rclone via {rclone_command:?}");
 
         let mut command = Command::new(rclone_command.command());
-
         if use_password {
             _ = command
                 .env("RCLONE_USER", &user)

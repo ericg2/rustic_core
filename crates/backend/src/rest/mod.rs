@@ -1,5 +1,5 @@
-mod backend;
 mod config;
+mod backend;
 
 pub use config::RestConfig;
 

@@ -1,7 +1,7 @@
 use jiff::Zoned;
 use rand::{Rng, rng};
 use scrypt::Params;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_with::{base64::Base64, serde_as, skip_serializing_none};
 
 use crate::{

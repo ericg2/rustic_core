@@ -1,6 +1,6 @@
 use derive_setters::Setters;
 use rustic_core::{
-    CommandInput, CommandInputErrorKind, ErrorKind, ReadSource, ReadSourceBuilder, ReadSourceEntry,
+    CommandInput, CommandInputErrorKind, ErrorKind, FileLister, ReadSourceConfig, File,
     RusticError, RusticResult,
 };
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ impl CommandSource {
     }
 }
 
-impl ReadSourceBuilder for CommandSource {
+impl ReadSourceConfig for CommandSource {
     type Reader = StdoutReader;
 
     fn get_reader(&self) -> RusticResult<Self::Reader> {
@@ -109,18 +109,18 @@ impl StdoutReader {
     }
 }
 
-impl ReadSource for StdoutReader {
+impl FileLister for StdoutReader {
     type Open = ChildStdout;
-    type Iter = Once<RusticResult<ReadSourceEntry<ChildStdout>>>;
+    type Iter = Once<RusticResult<File<ChildStdout>>>;
 
-    fn size(&self) -> RusticResult<Option<u64>> {
+    fn compute_size(&self) -> RusticResult<Option<u64>> {
         Ok(None)
     }
 
     fn entries(&self) -> Self::Iter {
         let open = self.process.lock().unwrap().stdout.take();
         once(
-            ReadSourceEntry::from_path(self.output.clone(), open).map_err(|err| {
+            File::from_path(self.output.clone(), open).map_err(|err| {
                 RusticError::with_source(
                     ErrorKind::Backend,
                     "Failed to create ReadSourceEntry from ChildStdout",
@@ -130,7 +130,7 @@ impl ReadSource for StdoutReader {
         )
     }
 
-    fn paths(&self) -> Vec<PathBuf> {
+    fn roots(&self) -> Vec<PathBuf> {
         vec![self.output.clone()]
     }
 
