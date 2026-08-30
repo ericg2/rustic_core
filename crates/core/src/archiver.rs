@@ -11,12 +11,12 @@ use log::warn;
 use pariter::IteratorExt;
 
 use crate::{
-    CancelToken, Progress,
+    CancelToken, ListAdapter, Progress, ReadSource,
     archiver::{
         file_archiver::FileArchiver, parent::Parent, tree::TreeIterator,
         tree_archiver::TreeArchiver,
     },
-    backend::{FileLister, File, decrypt::DecryptFullBackend},
+    backend::{File, FileLister, decrypt::DecryptFullBackend},
     blob::BlobType,
     error::RusticResult,
     index::{
@@ -39,9 +39,9 @@ pub struct TreeStackEmptyError;
 /// * `I` - The index to read from.
 #[allow(missing_debug_implementations)]
 #[allow(clippy::struct_field_names)]
-pub struct Archiver<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> {
+pub struct Archiver<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> {
     /// The `FileArchiver` is responsible for archiving files.
-    file_archiver: FileArchiver<'a, BE, I>,
+    file_archiver: FileArchiver<'a, BE, I, R>,
 
     /// The `TreeArchiver` is responsible for archiving trees.
     tree_archiver: TreeArchiver<'a, BE, I>,
@@ -58,11 +58,13 @@ pub struct Archiver<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> {
     /// The backend to write to.
     index: &'a I,
 
+    src: &'a R,
+
     /// The `SnapshotFile` to write to.
     snap: SnapshotFile,
 }
 
-impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
+impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a, BE, I, R> {
     /// Creates a new `Archiver`.
     ///
     /// # Arguments
@@ -80,6 +82,7 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
     pub fn new(
         be: BE,
         index: &'a I,
+        src: &'a R,
         config: &ConfigFile,
         parent: Parent,
         mut snap: SnapshotFile,
@@ -88,7 +91,7 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
         let mut summary = snap.summary.take().unwrap_or_default();
         summary.backup_start = Zoned::now();
 
-        let file_archiver = FileArchiver::new(be.clone(), index, indexer.clone(), config)?;
+        let file_archiver = FileArchiver::new(be.clone(), index, indexer.clone(), config, src)?;
         let tree_archiver = TreeArchiver::new(be.clone(), index, indexer.clone(), config, summary)?;
 
         Ok(Self {
@@ -99,9 +102,9 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
             be,
             index,
             snap,
+            src,
         })
     }
-
     /// Archives the given source.
     ///
     /// This will archive all files and trees in the given source.
@@ -123,51 +126,57 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
     /// * If sending the message to the raw packer fails.
     /// * If the index file could not be serialized.
     /// * If the time is not in the range of `Local::now()`.
-    pub fn archive<R>(
+    pub fn archive(
         mut self,
-        src: &impl FileLister,
+        src: ListAdapter<'_, R>,
         as_path: Option<&PathBuf>,
         skip_identical_parent: bool,
         no_scan: bool,
         p: &Progress,
         token: CancelToken,
-    ) -> RusticResult<SnapshotFile>
-    {
+    ) -> RusticResult<SnapshotFile> {
         token.check()?;
         scope(|s| -> RusticResult<_> {
-            // determine backup size in parallel to running backup
-            let src_size_handle = s.spawn(|| {
-                if !no_scan && !p.is_hidden() {
-                    match src.compute_size() {
-                        Ok(Some(size)) => p.set_length(size),
-                        Ok(None) => {}
-                        Err(err) => warn!("error determining backup size: {}", err.display_log()),
-                    }
-                }
-            });
-
-            // filter out errors and handle as_path
-            let iter = src.filter_map(|item| match item {
+            // filter out errors and handle as_path; lazily grow the
+            // progress bar's length as files are discovered, since src
+            // is single-pass and can't be scanned twice anymore.
+            let track_size = !no_scan && !p.is_hidden();
+            let mut total_size: u64 = 0;
+            let iter = src.filter_map(move |item| match item {
                 Err(err) => {
-                    warn!("ignoring error: {}", err.display_log());
+                    warn!("ignoring error: {}", err.to_string());
                     None
                 }
                 Ok(file) => {
+                    if track_size {
+                        total_size += file.size();
+                        p.set_length(total_size);
+                    }
+
+                    let is_dir = file.is_dir();
+                    // Only files need to be reopened for content later;
+                    // dirs (and anything else) carry no source path.
+                    let src_path = (!is_dir).then(|| file.path().to_path_buf());
                     let path = file.path();
                     let snapshot_path = if let Some(as_path) = as_path {
-                        crate::join_force(&as_path, &path)
+                        crate::join_force(as_path, path)
                     } else {
                         path.to_path_buf()
                     };
-                    Some(if file.is_dir() {
-                        (snapshot_path, file)
+
+                    // File -> Node, dropping File's own path since we pair
+                    // the node with `snapshot_path` (which may be remapped).
+                    let (_, node) = file.into_tree();
+                    Some(if is_dir {
+                        (snapshot_path, node, src_path)
                     } else {
                         (
                             snapshot_path
                                 .parent()
-                                .unwrap_or(&Path::new(""))
+                                .unwrap_or(Path::new(""))
                                 .to_path_buf(),
-                            file,
+                            node,
+                            src_path,
                         )
                     })
                 }
@@ -208,10 +217,6 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex> Archiver<'a, BE, I> {
                 token.check()?;
                 self.tree_archiver.add(item)
             })?;
-
-            src_size_handle
-                .join()
-                .expect("Scoped Size Handler thread should not panic!");
 
             Ok(())
         })?;

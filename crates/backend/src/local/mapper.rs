@@ -1,21 +1,13 @@
 #[cfg(not(windows))]
 pub mod nix_mapper;
 
-use std::{ffi::OsStr, path::Path};
+use std::io;
+use std::num::TryFromIntError;
+use std::path::Path;
 
-use derive_setters::Setters;
-use ignore::DirEntry;
 use jiff::Timestamp;
-use log::warn;
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
-
-use crate::local::lister::{IgnoreErrorKind, IgnoreResult, LocalFile};
-
-use rustic_core::{
-    DevIdOption, ExtendedAttribute, File, Metadata, Node, NodeType, SaveOptions, TimeOption,
-    XattrOption,
-};
+use rustic_core::NodeType;
 
 use std::path::PathBuf;
 
@@ -477,9 +469,9 @@ mod utils {
 
 #[cfg(windows)]
 mod utils {
-    use super::{BlockdevOption, LocalDestinationResult, NodeType};
+    use super::{LocalDestinationResult, NodeType};
     use jiff::Timestamp;
-    use rustic_core::{ExtendedAttribute, Metadata, Node};
+    use rustic_core::{BlockdevOption, ExtendedAttribute, Metadata, Node};
     use std::{ffi::OsStr, path::Path};
 
     /// Build the [`NodeType`] for a non-symlink entry (device, fifo, socket, directory, or regular file)

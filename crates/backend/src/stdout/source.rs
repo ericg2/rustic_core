@@ -1,17 +1,14 @@
 use derive_setters::Setters;
-use rustic_core::{
-    CommandInput, CommandInputErrorKind, ErrorKind, FileLister, ReadSourceConfig, File,
-    RusticError, RusticResult,
-};
+use rustic_core::{CommandInput, Metadata, Node, NodeType, ReadHandle, ReadSource};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use std::iter::{Once, once};
-use std::path::Path;
-use std::process::{Child, ChildStdout, Stdio};
-use std::sync::Mutex;
-use std::{path::PathBuf, process::Command};
+use std::fmt;
+use std::io::{self, Read, Seek, SeekFrom};
+use std::iter::once;
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdout, Command, Stdio};
 
-/// A source which backups a [`Command`] output.
+/// A source which backups a [`Command`]'s output.
 #[serde_as]
 #[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -33,108 +30,160 @@ impl CommandSource {
             command: Some(cmd.to_owned()),
         }
     }
-}
 
-impl ReadSourceConfig for CommandSource {
-    type Reader = StdoutReader;
-
-    fn get_reader(&self) -> RusticResult<Self::Reader> {
-        StdoutReader::new(&self)
-    }
-}
-
-/// The `StdoutReader` is a `ReadSource` when spawning a child process and reading its stdout
-#[derive(Debug)]
-pub struct StdoutReader {
-    /// The path of the stdin entry.
-    output: PathBuf,
-
-    /// The [`CommandInput`] to use.
-    cmd: CommandInput,
-
-    /// The child process
-    ///
-    /// # Note
-    ///
-    /// This is in a Mutex as we want to take out `ChildStdout`
-    /// in the `entries` method - but this method only gets a
-    /// reference of self.
-    process: Mutex<Child>,
-}
-
-impl StdoutReader {
-    /// Creates a new `ChildSource`.
-    ///
-    /// # Errors
-    /// - if calling the command fails
-    pub(crate) fn new(config: &CommandSource) -> RusticResult<Self> {
-        let output = config.output.clone().ok_or(RusticError::new(
-            ErrorKind::Configuration,
-            "Output must be filled in",
-        ))?;
-        let cmd = config.command.clone().ok_or(RusticError::new(
-            ErrorKind::Configuration,
-            "Command must be filled in",
-        ))?;
-        let process = Command::new(cmd.command())
-            .args(cmd.args())
-            .stdout(Stdio::piped())
-            .spawn()
-            .map_err(|err| CommandInputErrorKind::ProcessExecutionFailed {
-                command: cmd.clone(),
-                path: output.clone(),
-                source: err,
-            });
-
-        Ok(Self {
-            process: Mutex::new(cmd.on_failure().display_result(process)?),
-            output,
-            cmd,
+    /// Returns the configured output path, or an [`io::Error`] if none was set.
+    fn get_output(&self) -> io::Result<&Path> {
+        self.output.as_deref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "output path not configured")
         })
     }
 
-    /// Finishes the `ChildSource`
-    ///
-    /// # Errors
-    /// - if handling of the return code leads to an error
-    ///
-    /// # Panics
-    /// - if the lock for the process cannot be obtained (should not happen)
-    pub fn finish(self) -> RusticResult<()> {
-        let status = self.process.lock().unwrap().wait();
-        self.cmd
-            .on_failure()
-            .handle_status(status, "stdin-command", "call")?;
-        Ok(())
+    /// Returns the configured command, or an [`io::Error`] if none was set.
+    fn get_command(&self) -> io::Result<&CommandInput> {
+        self.command
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "command not configured"))
     }
 }
 
-impl FileLister for StdoutReader {
-    type Open = ChildStdout;
-    type Iter = Once<RusticResult<File<ChildStdout>>>;
-
-    fn compute_size(&self) -> RusticResult<Option<u64>> {
-        Ok(None)
+impl ReadSource for CommandSource {
+    fn location(&self) -> String {
+        self.output
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default()
     }
 
-    fn entries(&self) -> Self::Iter {
-        let open = self.process.lock().unwrap().stdout.take();
-        once(
-            File::from_path(self.output.clone(), open).map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::Backend,
-                    "Failed to create ReadSourceEntry from ChildStdout",
-                    err,
+    /// Spawns the configured command and hands back its stdout as a
+    /// [`ReadHandle`].
+    ///
+    /// The child is spawned fresh on every call — this mirrors `open_read`
+    /// being the natural "open this file" hook, at the cost of re-running the
+    /// command if `open_read` is ever called more than once for the same
+    /// source. If your call site only ever opens each source once, that's a
+    /// non-issue.
+    fn open_read(&self, path: &Path) -> io::Result<Box<dyn ReadHandle>> {
+        let output = self.get_output()?;
+        if path != output {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{path:?} not found in command source"),
+            ));
+        }
+
+        let cmd = self.get_command()?;
+        let child = Command::new(cmd.command())
+            .args(cmd.args())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("failed to spawn `{}`: {err}", cmd.command()),
                 )
-            }),
-        )
+            })?;
+
+        Ok(Box::new(CommandHandle::new(child)?))
     }
 
-    fn roots(&self) -> Vec<PathBuf> {
-        vec![self.output.clone()]
+    /// Lists the single virtual entry backed by the command's stdout.
+    ///
+    /// Only the root (`""` or `/`) yields anything; this source has no real
+    /// directory structure, just one file.
+    fn readdir(
+        &self,
+        path: &Path,
+    ) -> io::Result<Box<dyn Iterator<Item = io::Result<Node>> + Send>> {
+        let output = self.get_output()?;
+        if path != Path::new("") && path != Path::new("/") {
+            return Ok(Box::new(std::iter::empty()));
+        }
+
+        let name = output.file_name().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "output path has no file name")
+        })?;
+
+        let node = Node::new_node(name, NodeType::File, Metadata::default());
+        Ok(Box::new(once(Ok(node))))
     }
 
-    fn close(self) -> RusticResult<()> {
-        self.finish()
+    /// Returns metadata for `path` if it matches the configured output path.
+    ///
+    /// Size/mtime/etc. are left at their defaults since the command's output
+    /// size isn't known ahead of running it.
+    fn stat(&self, path: &Path) -> io::Result<Option<Metadata>> {
+        let output = self.get_output()?;
+        Ok((path == output).then(Metadata::default))
+    }
+}
+
+/// A [`ReadHandle`] that reads a spawned child process's stdout.
+///
+/// [`ReadHandle::close`] waits for the child to exit and surfaces a
+/// non-zero exit status as an error, folding in the old `finish` /
+/// `handle_status` behavior from `StdoutReader::finish`.
+pub struct CommandHandle {
+    child: Child,
+    stdout: ChildStdout,
+    read: u64,
+}
+
+impl CommandHandle {
+    fn new(mut child: Child) -> io::Result<Self> {
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "child process has no stdout"))?;
+        Ok(Self {
+            child,
+            stdout,
+            read: 0,
+        })
+    }
+}
+
+impl fmt::Debug for CommandHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommandHandle")
+            .field("pid", &self.child.id())
+            .field("read", &self.read)
+            .finish()
+    }
+}
+
+impl Read for CommandHandle {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.stdout.read(buf)?;
+        self.read += n as u64;
+        Ok(n)
+    }
+}
+
+impl Seek for CommandHandle {
+    /// `ChildStdout` is not seekable, so only requests that resolve to the
+    /// current position (rewind-to-zero-if-nothing-read, or a "tell") are
+    /// accepted; anything else errors.
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match pos {
+            SeekFrom::Start(0) => Ok(0),
+            SeekFrom::Current(0) => Ok(self.read),
+            _ => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "command source does not support seeking",
+            )),
+        }
+    }
+}
+
+impl ReadHandle for CommandHandle {
+    fn close(&mut self) -> io::Result<()> {
+        let status = self.child.wait()?;
+        if !status.success() {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("command exited with {status}"),
+            ));
+        }
+        Ok(())
     }
 }

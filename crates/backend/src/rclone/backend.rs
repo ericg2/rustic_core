@@ -280,7 +280,7 @@ impl RcloneBackend {
         })?;
 
         let rest_config = RestConfig::new(&rest_url);
-        let rest_be = RestBackend::new(&rest_config)?;
+        let rest_be = RestBackend::from_config(&rest_config)?;
         let handle = Some(std::thread::spawn(move || {
             loop {
                 let mut line = String::new();

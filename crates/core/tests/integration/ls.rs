@@ -22,11 +22,10 @@ fn test_ls(
 ) -> Result<()> {
     // Fixtures
     let (source, repo) = (tar_gz_testdata?, set_up_repo?.to_indexed_ids()?);
-    let paths = &source.path_list();
-
+    
     // we use as_path to not depend on the actual tempdir
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
-    let src = LocalSource::new(paths);
+    let src = LocalSource::new(source.path());
     // backup test-data
     let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 

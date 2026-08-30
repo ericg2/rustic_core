@@ -1,8 +1,8 @@
 use log::{Level, log};
 use opendal::layers::LoggingInterceptor;
-use opendal::raw::{AccessorInfo, Operation};
 use opendal::{Error, ErrorKind};
 use std::fmt::Display;
+use opendal::raw::{Operation, ServiceInfo};
 
 static LOGGING_TARGET: &str = "opendal::services";
 
@@ -14,7 +14,7 @@ impl LoggingInterceptor for OpenLogLayer {
     #[inline]
     fn log(
         &self,
-        info: &AccessorInfo,
+        info: &ServiceInfo,
         operation: Operation,
         context: &[(&str, &str)],
         message: &str,

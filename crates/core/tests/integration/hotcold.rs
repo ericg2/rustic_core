@@ -31,13 +31,11 @@ fn hot_cold(tar_gz_testdata: Result<TestSource>) -> Result<()> {
         .init(&creds, &key_opts, config_opts)?
         .to_indexed_ids()?;
 
-    let paths = &source.path_list();
-
     // we use as_path to not depend on the actual tempdir
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
 
     // backup
-    let src = LocalSource::new(paths);
+    let src = LocalSource::new(source.path());
     let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // get all snapshots and check them

@@ -3,6 +3,7 @@ use bytes::Bytes;
 use derive_setters::Setters;
 use ignore::DirEntry;
 use log::{debug, error, trace, warn};
+use std::fs::File;
 use std::{
     fmt::Debug,
     fs::{self, Metadata, OpenOptions},
@@ -12,10 +13,10 @@ use std::{
 };
 use walkdir::WalkDir;
 
-use crate::local::{config::LocalConfig, lister::LocalWalker, mapper};
+use crate::local::{config::LocalConfig, mapper};
 use rustic_core::{
-    ALL_FILE_TYPES, CommandInput, ErrorKind, File, FileType, Id, ReadBackend, ReadSource,
-    RusticError, RusticResult, WriteBackend, WriteSource,
+    ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, Node, ReadBackend, ReadHandle,
+    ReadSource, RusticError, RusticResult, WriteBackend, WriteSource,
 };
 
 /// A local backend.
@@ -23,8 +24,12 @@ use rustic_core::{
 pub struct LocalSource(PathBuf);
 
 impl LocalSource {
+    pub fn new(path: impl AsRef<Path>) -> Self{
+        Self(path.as_ref().to_path_buf())
+    }
+
     pub fn from_config(config: &LocalConfig) -> RusticResult<Self> {
-        let path = config.path.ok_or_else(|| {
+        let path = config.path.clone().ok_or_else(|| {
             RusticError::new(ErrorKind::InvalidInput, "Path is required for Local Config")
         })?;
         Ok(Self(path))
@@ -40,25 +45,34 @@ impl ReadSource for LocalSource {
         self.0.to_string_lossy().to_string()
     }
 
-    fn listdir(
-        &self,
-        path: &Path,
-        opts: rustic_core::ListOptions,
-    ) -> std::io::Result<Box<dyn rustic_core::FileLister>> {
-        let ret = Arc::new(LocalWalker::new(self.clone(), root, opts)?);
-        Ok(Box::new(ret))
-    }
-
-    fn open_read(&self, path: &Path) -> std::io::Result<Box<dyn rustic_core::ReadHandle>> {
+    fn open_read(&self, path: &Path) -> io::Result<Box<dyn ReadHandle>> {
         let path = self.fix_path(path);
         let file = File::open(&path)?;
         Ok(Box::new(file))
     }
 
+    fn readdir(
+        &self,
+        path: &Path,
+    ) -> io::Result<Box<dyn Iterator<Item = io::Result<Node>> + Send>> {
+        let entries = fs::read_dir(path)?.map(|entry| {
+            let entry = entry?;
+            let metadata = entry.metadata()?;
+            let converted_meta = mapper::convert_meta(&entry.path(), &metadata);
+            let file_type = mapper::parse_file_type(&metadata);
+            Ok(Node::new_node(
+                &entry.file_name(),
+                file_type,
+                converted_meta,
+            ))
+        });
+        Ok(Box::new(entries))
+    }
+
     fn stat(&self, path: &Path) -> std::io::Result<Option<rustic_core::Metadata>> {
         let path = self.fix_path(path);
-        match self.0.stat(&path) {
-            Ok(meta) => Ok(Some(mapper::convert_meta(&path, meta))),
+        match fs::symlink_metadata(&path) {
+            Ok(meta) => Ok(Some(mapper::convert_meta(&path, &meta))),
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err.into()),
         }
@@ -137,11 +151,11 @@ impl WriteSource for LocalSource {
     }
 
     fn write_all(&self, path: &Path, bytes: Bytes) -> std::io::Result<()> {
-        fn write_local_file(filename: &Path, buf: &[u8]) -> std::io::Result<()> {
+        fn write_local_file(filename: &Path, buf: &[u8]) -> io::Result<()> {
             let length = buf
                 .len()
                 .try_into()
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
+                .map_err(|err| std::io::Error::new(io::ErrorKind::InvalidInput, err))?;
 
             let mut file = OpenOptions::new()
                 .create(true)
@@ -157,13 +171,13 @@ impl WriteSource for LocalSource {
 
         let filename = self.fix_path(path);
         let parent = filename.parent().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
                 "path has no parent directory",
             )
         })?;
 
-        std::fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)?;
 
         let filename_tmp = parent.join(
             filename
@@ -184,7 +198,7 @@ impl WriteSource for LocalSource {
             }
         }
 
-        std::fs::rename(&filename_tmp, &filename)?;
+        fs::rename(&filename_tmp, &filename)?;
         Ok(())
     }
 
@@ -193,7 +207,7 @@ impl WriteSource for LocalSource {
             .create(true)
             .truncate(false)
             .write(true)
-            .open(filename)?;
+            .open(path)?;
 
         let _ = file.seek(SeekFrom::Start(offset))?;
         file.write_all(data)?;

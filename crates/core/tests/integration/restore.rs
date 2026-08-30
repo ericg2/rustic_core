@@ -5,7 +5,7 @@ use std::str::FromStr;
 use std::fs;
 
 use anyhow::Result;
-use rustic_backend::local::{LocalDestination, LocalSource};
+use rustic_backend::local::{LocalSource};
 use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_core::{
     BackupOptions, CancelToken, ConfigOptions, Credentials, KeyOptions, LsOptions, Repository,
@@ -30,7 +30,7 @@ fn test_restore_preserves_hardlinks(
     let (source, repo) = (tar_gz_testdata?, set_up_repo?.to_indexed_ids()?);
 
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
-    let src = LocalSource::new(source.path_list());
+    let src = LocalSource::new(source.path());
     let _snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     let repo = repo.to_indexed()?;

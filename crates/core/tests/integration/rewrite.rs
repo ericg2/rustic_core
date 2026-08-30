@@ -30,13 +30,11 @@ fn test_rewrite(
     // Fixtures
     let (source, repo) = (tar_gz_testdata?, set_up_repo?.to_indexed_ids()?);
 
-    let paths = &source.path_list();
-
     // we use as_path to not depend on the actual tempdir
-    let backup_opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
+    let mut backup_opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
 
     // first backup
-    let src = LocalSource::new(paths);
+    let src = LocalSource::new(source.path());
     let snapshot = repo.backup(
         &backup_opts,
         &src,
@@ -113,7 +111,9 @@ fn test_rewrite(
     let glob = glob.replace('\\', "/"); // correct windows paths for glob
 
     let excludes = Excludes::default().globs(vec![glob]);
-    let src = LocalSource::new(paths).excludes(excludes);
+    let src = LocalSource::new(source.path());
+    backup_opts.source_opts.excludes = Some(excludes.clone());
+
     let snapshot = repo.backup(
         &backup_opts,
         &src,

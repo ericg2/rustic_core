@@ -6,6 +6,7 @@ use serde_with::serde_as;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use crate::repo::RepoAdapter;
 
 #[serde_as]
 #[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]
@@ -25,31 +26,22 @@ impl LocalConfig {
             path: Some(path.as_ref().to_path_buf()),
         }
     }
+}
 
-    /// Creates an [`LocalRepo`] from an iterator.
-    ///
-    /// # Important
-    /// This does not guarantee the [`LocalRepo`] is initialized correctly. Due to the
-    /// nature of dynamic types - this feature is only a convenience. All invalid fields will
-    /// be skipped, and will not return an error during this process.
-    pub fn from_iter<K, V, I>(path: impl AsRef<str>, dict: I) -> Self
+impl BackendConfig for LocalConfig {
+    type Output = RepoAdapter<LocalSource>;
+
+    fn from_iter<K, V, I>(path: impl AsRef<str>, _dict: I) -> Self
     where
-        I: IntoIterator<Item = (K, V)>,
+        I: IntoIterator<Item=(K, V)>,
         K: Into<String>,
-        V: Into<String>,
+        V: Into<String>
     {
-        let map: HashMap<String, String> = dict
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.into()))
-            .collect();
-
         Self {
             path: Some(PathBuf::from(path.as_ref())),
         }
     }
-}
 
-impl BackendConfig for LocalConfig {
     fn get_path(&self) -> Option<String> {
         self.path.clone().map(|x| x.to_string_lossy().to_string())
     }
@@ -60,9 +52,8 @@ impl BackendConfig for LocalConfig {
         ret
     }
 
-    fn get_source(&self) -> RusticResult<Arc<dyn WriteSource>> {
-        // Make sure the fields are correctly filled.
-        let ret = LocalSource::from_config(self)?;
-        Ok(Arc::new(ret))
+    fn get_repo(&self) -> RusticResult<Self::Output> {
+        let src = LocalSource::from_config(&self)?;
+        Ok(RepoAdapter::new(src))
     }
 }

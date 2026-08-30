@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::choose::BackendBuilder;
+    use rustic_core::BackendConfig;
+use crate::choose::BackendBuilder;
     use crate::opendal::config::*;
     use std::collections::BTreeMap;
     use std::str::FromStr;

@@ -11,7 +11,7 @@ use ignore::{Match, overrides::Override};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    RusticResult, TreeId,
+    ErrorKind, RusticError, RusticResult, TreeId,
     backend::{
         decrypt::{DecryptFullBackend, DecryptWriteBackend},
         node::modification::NodeModification,
@@ -59,7 +59,9 @@ pub struct RewriteVisitor {
 impl RewriteVisitor {
     pub fn new(opts: &RewriteTreesOptions) -> RusticResult<Self> {
         Ok(Self {
-            overrides: opts.excludes.as_override()?,
+            overrides: opts.excludes.as_override().map_err(|err| {
+                RusticError::with_source(ErrorKind::Configuration, "Failed to get overrides.", err)
+            })?,
             node_modification: opts.node_modification.clone(),
             all_trees: opts.all_trees,
             changed: BTreeMap::new(),

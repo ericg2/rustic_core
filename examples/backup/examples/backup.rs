@@ -25,9 +25,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         .open(&credentials)?
         .to_indexed_ids()?;
 
-    let paths = PathList::from_string("/")?;
     let backup_opts = BackupOptions::default();
-    let source = LocalSource::new(paths);
+    let source = LocalSource::new("/test");
     let snap = SnapshotOptions::default()
         .add_tags("tag1,tag2")?
         .to_snapshot()?;

@@ -17,19 +17,23 @@
 
 use crate::BackendBuilder;
 use log::warn;
-use opendal::raw::oio::Entry;
+use opendal::raw::oio::{Entry, ReadStreamDyn};
 use opendal::raw::*;
-use opendal::{Buffer, Builder, Capability, Configurator, EntryMode, Error, ErrorKind, Metadata};
+use opendal::{
+    Buffer, Builder, BytesRange, Capability, Configurator, EntryMode, Error, ErrorKind, Metadata,
+    OperationContext,
+};
 use rustic_core::vfs::{IdenticalSnapshot, Latest, OpenFile, Vfs};
 use rustic_core::{
     BackendOptions, Credentials, IndexedFullStatus, Node, Repository, RepositoryOptions,
 };
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::vec;
-use tokio::sync::RwLock;
+use tokio::sync::{OnceCell, RwLock};
 use tokio::time;
 
 /// Configuration for the Rustic VFS OpenDAL backend.
@@ -50,7 +54,7 @@ use tokio::time;
 /// configs can be partially constructed (e.g. loaded from a file and then
 /// patched). However, some fields are **logically required** and will cause
 /// [`RusticVfsBuilder::build`] to return a
-/// [`ConfigInvalid`](opendal_core::ErrorKind::ConfigInvalid) error if left
+/// [`ConfigInvalid`](opendal::ErrorKind::ConfigInvalid) error if left
 /// as `None`:
 ///
 /// | Field              | Required at build time | Notes |
@@ -81,11 +85,11 @@ pub struct RusticVfsConfig {
     /// Passed to [`Repository::open`](rustic_core::Repository::open). There
     /// is no ambient/fallback credential lookup — these must be supplied
     /// explicitly. If authentication fails a
-    /// [`ConfigInvalid`](opendal_core::ErrorKind::ConfigInvalid) error is
+    /// [`ConfigInvalid`](opendal::ErrorKind::ConfigInvalid) error is
     /// returned at build time.
     ///
     /// **Logically required** — [`build`](Builder::build) returns
-    /// [`ConfigInvalid`](opendal_core::ErrorKind::ConfigInvalid) if `None`.
+    /// [`ConfigInvalid`](opendal::ErrorKind::ConfigInvalid) if `None`.
     /// Wrapped in `Option` solely to satisfy [`Default`].
     pub credentials: Option<Credentials>,
 
@@ -132,7 +136,7 @@ impl Configurator for RusticVfsConfig {
 /// [`with_backend`](RusticVfsBuilder::with_backend), and
 /// [`with_credentials`](RusticVfsBuilder::with_credentials) **must** be called
 /// before [`build`](Builder::build); omitting any of them will return a
-/// [`ConfigInvalid`](opendal_core::ErrorKind::ConfigInvalid) error.
+/// [`ConfigInvalid`](opendal::ErrorKind::ConfigInvalid) error.
 ///
 #[derive(Debug, Default, Clone)]
 pub struct RusticVfsBuilder {
@@ -210,13 +214,13 @@ impl Builder for RusticVfsBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`ConfigInvalid`](opendal_core::ErrorKind::ConfigInvalid) if
+    /// Returns [`ConfigInvalid`](opendal::ErrorKind::ConfigInvalid) if
     /// any of the logically required fields (`options`, `backend`,
     /// `credentials`) were not set, or if the rustic repository cannot be
     /// opened with the supplied configuration. Returns
-    /// [`Unexpected`](opendal_core::ErrorKind::Unexpected) for transient
+    /// [`Unexpected`](opendal::ErrorKind::Unexpected) for transient
     /// failures (e.g. the storage backend is temporarily unreachable).
-    fn build(self) -> opendal::Result<impl Access> {
+    fn build(self) -> opendal::Result<impl Service> {
         VfsBackend::from_config(self.config)
     }
 }
@@ -247,18 +251,28 @@ const DEFAULT_PATH: &str = "[{hostname}]/[{label}]/{time}";
 const DEFAULT_TIME: &str = "%Y-%m-%d_%H-%M-%S";
 
 /// Number of bytes read from the rustic blob store in a single
-/// [`oio::Read::read`] call. 4 MiB keeps individual allocations modest while
-/// amortizing per-call overhead over a reasonable chunk of data.
+/// [`oio::Read::read`] call when the caller doesn't bound the range. 4 MiB
+/// keeps individual allocations modest while amortizing per-call overhead
+/// over a reasonable chunk of data.
 const BUFFER_SIZE: usize = 4_000_000;
+
+/// A standard "this backend is read-only" error, reused by every mutating
+/// operation (`create_dir`, `write`, `delete`, `copy`, `rename`, `presign`).
+fn unsupported(op: &'static str) -> Error {
+    Error::new(
+        ErrorKind::Unsupported,
+        format!("VfsBackend is read-only; `{op}` is not supported."),
+    )
+}
 
 // ── VfsBackend ────────────────────────────────────────────────────────────────
 
-/// OpenDAL [`Access`] implementation backed by a rustic repository.
+/// OpenDAL [`Service`] implementation backed by a rustic repository.
 ///
 /// `VfsBackend` presents the snapshots in a rustic repository as a read-only
-/// virtual filesystem through OpenDAL's [`Access`] trait. The in-memory VFS
-/// is kept up-to-date by a background refresh task that periodically re-reads
-/// the repository index and atomically swaps in a new [`Vfs`] instance.
+/// virtual filesystem. The in-memory VFS is kept up-to-date by a background
+/// refresh task that periodically re-reads the repository index and
+/// atomically swaps in a new [`Vfs`] instance.
 ///
 /// # Capabilities
 ///
@@ -267,8 +281,8 @@ const BUFFER_SIZE: usize = 4_000_000;
 /// | `stat`            | ✓         |
 /// | `read`            | ✓         |
 /// | `list`            | ✓         |
-/// | `copy`            | ✓         |
 /// | `list_recursive`  | –         |
+/// | `copy`            | –         |
 /// | writes / deletes  | –         |
 ///
 /// # Construction
@@ -290,12 +304,6 @@ pub struct VfsBackend {
     /// Wrapped in `Arc` so it can be shared with the background refresh task
     /// without cloning the repository itself.
     repo: Arc<IndexedRepo>,
-
-    /// Cached OpenDAL accessor metadata (scheme, name, capabilities).
-    ///
-    /// Built once at construction and cheaply cloned on every [`Access::info`]
-    /// call.
-    info: Arc<AccessorInfo>,
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -310,7 +318,7 @@ pub struct VfsBackend {
 /// # Errors
 ///
 /// Propagates any rustic error (e.g. index read failure, corrupt pack) as an
-/// [`opendal_core::ErrorKind::Unexpected`] temporary error so that the caller
+/// [`opendal::ErrorKind::Unexpected`] temporary error so that the caller
 /// can retry without discarding the existing VFS.
 fn build_vfs(repo: &IndexedRepo) -> opendal::Result<Vfs> {
     repo.get_all_snapshots()
@@ -352,7 +360,7 @@ fn build_vfs(repo: &IndexedRepo) -> opendal::Result<Vfs> {
 fn spawn_refresh_task(vfs: &Arc<RwLock<Vfs>>, repo: Arc<IndexedRepo>, interval: Duration) {
     let weak_vfs: Weak<RwLock<Vfs>> = Arc::downgrade(vfs);
     let mut ticker = time::interval(interval);
-    tokio::spawn(async move {
+    let _ = tokio::spawn(async move {
         loop {
             ticker.tick().await;
             let Some(arc_vfs) = weak_vfs.upgrade() else {
@@ -390,28 +398,12 @@ impl VfsBackend {
     ///
     /// # Errors
     ///
-    /// Returns [`Unexpected`](opendal_core::ErrorKind::Unexpected) if the
+    /// Returns [`Unexpected`](opendal::ErrorKind::Unexpected) if the
     /// initial VFS build fails (e.g. the repository index is unreadable).
     pub fn from_repo(repo: Arc<IndexedRepo>, refresh_interval: Duration) -> opendal::Result<Self> {
         let vfs = Arc::new(RwLock::new(build_vfs(&repo)?));
-        let info = AccessorInfo::default();
-        info.set_scheme("rustic")
-            .set_name("Rustic")
-            .set_native_capability(Capability {
-                stat: true,
-                read: true,
-                copy: true,
-                list: true,
-                shared: true,
-                list_with_recursive: false,
-                ..Default::default()
-            });
 
-        let backend = Self {
-            vfs,
-            repo,
-            info: Arc::new(info),
-        };
+        let backend = Self { vfs, repo };
 
         spawn_refresh_task(&backend.vfs, backend.repo.clone(), refresh_interval);
 
@@ -430,9 +422,9 @@ impl VfsBackend {
     ///
     /// | Condition | Error kind |
     /// |-----------|-----------|
-    /// | `credentials` is `None` | [`ConfigInvalid`](opendal_core::ErrorKind::ConfigInvalid) |
-    /// | `backend` options cannot be parsed | [`ConfigInvalid`](opendal_core::ErrorKind::ConfigInvalid) |
-    /// | Repository cannot be opened / indexed | [`Unexpected`](opendal_core::ErrorKind::Unexpected) (temporary) |
+    /// | `credentials` is `None` | [`ConfigInvalid`](opendal::ErrorKind::ConfigInvalid) |
+    /// | `backend` options cannot be parsed | [`ConfigInvalid`](opendal::ErrorKind::ConfigInvalid) |
+    /// | Repository cannot be opened / indexed | [`Unexpected`](opendal::ErrorKind::Unexpected) (temporary) |
     pub fn from_config(config: RusticVfsConfig) -> opendal::Result<Self> {
         let creds = config.credentials.ok_or_else(|| {
             Error::new(
@@ -469,13 +461,13 @@ impl VfsBackend {
 
     /// Resolve a VFS path string to a rustic [`Node`].
     ///
-    /// Normalises the path (ensuring a leading `/` and stripping trailing
+    /// Normalizes the path (ensuring a leading `/` and stripping trailing
     /// slashes) before handing it to the VFS. Holds the VFS read lock only for
     /// the duration of the lookup.
     ///
     /// # Errors
     ///
-    /// Returns [`NotFound`](opendal_core::ErrorKind::NotFound) if the path
+    /// Returns [`NotFound`](opendal::ErrorKind::NotFound) if the path
     /// does not exist in the current VFS snapshot.
     async fn node_from_path(&self, path: &str) -> opendal::Result<Node> {
         let path = normalize_path(path);
@@ -487,86 +479,142 @@ impl VfsBackend {
     }
 }
 
-// ── Access impl ───────────────────────────────────────────────────────────────
+// ── Service impl ───────────────────────────────────────────────────────────────
 
-impl Access for VfsBackend {
+impl Service for VfsBackend {
     type Reader = VfsReader;
     type Writer = ();
     type Lister = VfsLister;
     type Deleter = ();
     type Copier = ();
 
-    /// Returns the cached [`AccessorInfo`] describing this backend's scheme,
-    /// name, and capabilities.
-    fn info(&self) -> Arc<AccessorInfo> {
-        self.info.clone()
+    fn info(&self) -> ServiceInfo {
+        ServiceInfo::new("rustic", "/", "rustic")
+    }
+
+    fn capability(&self) -> Capability {
+        Capability {
+            stat: true,
+            read: true,
+            list: true,
+            shared: true,
+            list_with_recursive: false,
+            ..Default::default()
+        }
+    }
+
+    fn create_dir(
+        &self,
+        _ctx: &OperationContext,
+        _path: &str,
+        _args: OpCreateDir,
+    ) -> impl Future<Output = opendal::Result<RpCreateDir>> + MaybeSend {
+        async { Err(unsupported("create_dir")) }
     }
 
     /// Stat a path, returning its [`Metadata`] (type and last-modified time).
     ///
+    /// This is eager — unlike `read`/`list`, `stat` needs the resolved
+    /// [`Metadata`] immediately to build its [`RpStat`], so it resolves the
+    /// node right away rather than deferring the lookup.
+    ///
     /// # Errors
     ///
-    /// Returns [`NotFound`](opendal_core::ErrorKind::NotFound) if the path
+    /// Returns [`NotFound`](opendal::ErrorKind::NotFound) if the path
     /// does not exist in the current VFS snapshot.
-    async fn stat(&self, path: &str, _args: OpStat) -> opendal::Result<RpStat> {
+    async fn stat(
+        &self,
+        _ctx: &OperationContext,
+        path: &str,
+        _args: OpStat,
+    ) -> opendal::Result<RpStat> {
         let node = self.node_from_path(path).await?;
         Ok(RpStat::new(meta_from_node(&node)))
     }
 
-    /// Open a file for reading, returning its metadata and a [`VfsReader`].
+    /// Construct a [`VfsReader`] for `path`.
     ///
-    /// The reader honours the byte range specified in `args`; if no range is
-    /// given the full file is readable. Reads are served in
-    /// [`BUFFER_SIZE`]-byte chunks from the rustic blob store.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NotFound`](opendal_core::ErrorKind::NotFound) if the path
-    /// does not exist, or [`Unexpected`](opendal_core::ErrorKind::Unexpected)
-    /// if the file cannot be opened in the rustic layer.
-    async fn read(&self, path: &str, args: OpRead) -> opendal::Result<(RpRead, Self::Reader)> {
-        let node = self.node_from_path(path).await?;
-        let meta = meta_from_node(&node);
-        let file = self.repo.open_file(&node).map_err(|e| {
-            Error::new(
-                ErrorKind::Unexpected,
-                "Failed to open file in rustic backend.",
-            )
-            .set_source(e)
-            .set_temporary()
-        })?;
-        let reader = VfsReader::new(
-            file,
+    /// This is intentionally synchronous and does **no** I/O: it doesn't
+    /// resolve the path to a [`Node`] and doesn't open the underlying rustic
+    /// file. That work happens lazily, the first time [`VfsReader::open`] or
+    /// [`VfsReader::read`] is called (and is cached after that), which is
+    /// also why no [`RpRead`] is returned here — it's produced later,
+    /// alongside the resolved [`Metadata`], by the reader itself.
+    fn read(
+        &self,
+        _ctx: &OperationContext,
+        path: &str,
+        _args: OpRead,
+    ) -> opendal::Result<Self::Reader> {
+        let normalized = normalize_path(path);
+        Ok(VfsReader::new(
+            normalized,
+            self.vfs.clone(),
             self.repo.clone(),
-            args.range().offset() as usize,
-            args.range().size().map(|s| s as usize),
-        );
-        Ok((RpRead::new(meta), reader))
+        ))
     }
 
-    /// List the direct children of a directory path.
+    fn write(
+        &self,
+        _ctx: &OperationContext,
+        _path: &str,
+        _args: OpWrite,
+    ) -> opendal::Result<Self::Writer> {
+        Err(unsupported("write"))
+    }
+
+    fn delete(&self, _ctx: &OperationContext) -> opendal::Result<Self::Deleter> {
+        Err(unsupported("delete"))
+    }
+
+    /// Construct a [`VfsLister`] for `path`.
     ///
-    /// Returns a [`VfsLister`] that yields one [`Entry`] per child node. Only
-    /// the immediate children are returned; recursive listing is not supported
-    /// (see [`Capability`] flags).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`NotFound`](ErrorKind::NotFound) if the path
-    /// does not exist or is not a directory in the current VFS snapshot.
-    async fn list(&self, path: &str, _args: OpList) -> opendal::Result<(RpList, Self::Lister)> {
+    /// Like `read`, this is synchronous and doesn't touch the VFS — the
+    /// directory's children are fetched lazily on the first call to
+    /// [`VfsLister::next`] and cached from then on.
+    fn list(
+        &self,
+        _ctx: &OperationContext,
+        path: &str,
+        _args: OpList,
+    ) -> opendal::Result<Self::Lister> {
         let normalized = normalize_path(path);
         let path_buf = Path::new(&normalized).to_path_buf();
-        let entries = self
-            .vfs
-            .read()
-            .await
-            .dir_entries_from_path(&self.repo, &path_buf)
-            .map_err(|e| {
-                Error::new(ErrorKind::NotFound, "Directory not found in VFS.").set_source(e)
-            })?;
+        Ok(VfsLister::new(
+            path_buf,
+            self.vfs.clone(),
+            self.repo.clone(),
+        ))
+    }
 
-        Ok((RpList::default(), VfsLister::new(path_buf, entries)))
+    fn copy(
+        &self,
+        _ctx: &OperationContext,
+        _from: &str,
+        _to: &str,
+        _args: OpCopy,
+        _opts: OpCopier,
+    ) -> opendal::Result<Self::Copier> {
+        Err(unsupported("copy"))
+    }
+
+    fn rename(
+        &self,
+        _ctx: &OperationContext,
+        _from: &str,
+        _to: &str,
+        _args: OpRename,
+    ) -> impl Future<Output = opendal::Result<RpRename>> + MaybeSend {
+        async { Err(unsupported("rename")) }
+    }
+
+    fn presign(
+        &self,
+        _ctx: &OperationContext,
+        _path: &str,
+        _args: OpPresign,
+    ) -> impl Future<Output = opendal::Result<RpPresign>> + MaybeSend {
+        async { Err(unsupported("presign")) }
     }
 }
 
@@ -575,19 +623,31 @@ impl Access for VfsBackend {
 /// Convert a rustic [`Node`] to OpenDAL [`Metadata`].
 ///
 /// Maps the node's directory/file status, last-modified time, and content
-/// length into the fields OpenDAL consumers expect.
+/// length into the fields OpenDAL consumers expect. `Metadata::with_last_modified`
+/// takes an [`opendal::raw::Timestamp`] (jiff-backed) rather than a
+/// `chrono::DateTime`, so the node's `mtime` is routed through `SystemTime`
+/// first via `TryFrom<SystemTime>`, which works regardless of whether rustic's
+/// `mtime` is a `chrono::DateTime<_>` or `time::OffsetDateTime` under the hood.
 fn meta_from_node(n: &Node) -> Metadata {
-    Metadata::default()
-        .with_mode(if n.is_dir() {
-            EntryMode::DIR
-        } else {
-            EntryMode::FILE
-        })
-        .with_last_modified(n.meta.mtime.unwrap_or_default().into())
-        .with_content_length(n.meta.size)
+    let mode = if n.is_dir() {
+        EntryMode::DIR
+    } else {
+        EntryMode::FILE
+    };
+
+    let mut meta = Metadata::new(mode).with_content_length(n.meta.size);
+
+    if let Some(mtime) = n.meta.mtime {
+        match Timestamp::try_from(SystemTime::from(mtime)) {
+            Ok(ts) => meta = meta.with_last_modified(ts),
+            Err(e) => warn!("Failed to convert mtime to OpenDAL Timestamp: {e}"),
+        }
+    }
+
+    meta
 }
 
-/// Normalise a path string for VFS lookup.
+/// Normalize a path string for VFS lookup.
 ///
 /// Ensures the path starts with `/` and strips any trailing `/` unless the
 /// path is the root (`/`) itself. OpenDAL may hand us paths in either form;
@@ -610,77 +670,149 @@ fn normalize_path(path: &str) -> String {
 /// [`oio::Read`] implementation that streams blob data out of a rustic
 /// repository file.
 ///
-/// Reads are issued in [`BUFFER_SIZE`]-byte chunks starting at `pos`. If a
-/// byte-range was requested via [`OpRead`], `len` tracks how many bytes remain
-/// in the window; once exhausted, `read` returns an empty [`Buffer`].
+/// `VfsReader` is fully lazy: it's constructed with just a `path` and shared
+/// handles to the [`Vfs`] and [`IndexedRepo`] — no node resolution, no file
+/// open. The first call to [`open`](oio::Read::open) or
+/// [`read`](oio::Read::read) resolves the path to a [`Node`] and opens the
+/// underlying rustic file via [`ensure_open`](VfsReader::ensure_open), caching
+/// the result in a [`OnceCell`] so later calls reuse the same handle instead
+/// of repeating the lookup/open.
 pub struct VfsReader {
-    /// The open rustic file handle (contains chunk metadata, not raw bytes).
-    file: Arc<OpenFile>,
-    /// Repository used to fetch blob data for each chunk.
+    /// The VFS path this reader was constructed for.
+    path: String,
+    /// Shared, refresh-able VFS, used to lazily resolve `path` to a [`Node`].
+    vfs: Arc<RwLock<Vfs>>,
+    /// Repository used to open the file and fetch blob data for each chunk.
     repo: Arc<IndexedRepo>,
-    /// Current read position as a byte offset into the file.
-    pos: usize,
-    /// Remaining bytes to serve, or `None` if reading to end-of-file.
-    len: Option<usize>,
+    /// Lazily-populated `(resolved node, opened file)`, computed once on
+    /// first use and reused thereafter.
+    state: OnceCell<(Node, Arc<OpenFile>)>,
 }
 
 impl VfsReader {
-    /// Create a new [`VfsReader`].
+    /// Create a new, unopened [`VfsReader`] for `path`.
+    ///
+    /// Does no I/O. The path isn't resolved and the file isn't opened until
+    /// [`ensure_open`](VfsReader::ensure_open) runs, which happens the first
+    /// time [`open`](oio::Read::open) or [`read`](oio::Read::read) is called.
     ///
     /// # Arguments
     ///
-    /// * `file` – Open rustic file handle.
-    /// * `repo` – Repository used to resolve blob data.
-    /// * `pos`  – Starting byte offset (from [`OpRead`] range).
-    /// * `len`  – Maximum bytes to serve, or `None` for the full remainder.
+    /// * `path` – Normalised VFS path to read.
+    /// * `vfs`  – Shared VFS used to resolve `path` to a [`Node`].
+    /// * `repo` – Repository used to open the file and resolve blob data.
     pub(crate) fn new(
-        file: OpenFile,
+        path: impl Into<String>,
+        vfs: Arc<RwLock<Vfs>>,
         repo: Arc<IndexedRepo>,
-        pos: usize,
-        len: Option<usize>,
     ) -> Self {
         Self {
-            file: Arc::new(file),
+            path: path.into(),
+            vfs,
             repo,
-            pos,
-            len,
+            state: OnceCell::new(),
         }
+    }
+
+    /// Resolve `path` to a [`Node`] and open the underlying rustic file,
+    /// doing so only once and caching the result for subsequent calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotFound`](opendal::ErrorKind::NotFound) if the path
+    /// doesn't exist in the current VFS snapshot, or
+    /// [`Unexpected`](opendal::ErrorKind::Unexpected) (temporary) if the
+    /// rustic file can't be opened.
+    async fn ensure_open(&self) -> opendal::Result<(Node, Arc<OpenFile>)> {
+        let (node, file) = self
+            .state
+            .get_or_try_init(|| async {
+                let node = self
+                    .vfs
+                    .read()
+                    .await
+                    .node_from_path(&self.repo, Path::new(&self.path))
+                    .map_err(|e| {
+                        Error::new(ErrorKind::NotFound, "Path not found in VFS.").set_source(e)
+                    })?;
+
+                let repo = self.repo.clone();
+                let node_for_open = node.clone();
+                let file = tokio::task::spawn_blocking(move || repo.open_file(&node_for_open))
+                    .await
+                    .map_err(|e| Error::new(ErrorKind::Unexpected, "join error").set_source(e))?
+                    .map_err(|e| {
+                        Error::new(
+                            ErrorKind::Unexpected,
+                            "Failed to open file in rustic backend.",
+                        )
+                        .set_source(e)
+                        .set_temporary()
+                    })?;
+
+                Ok::<_, Error>((node, Arc::new(file)))
+            })
+            .await?;
+
+        Ok((node.clone(), file.clone()))
     }
 }
 
 impl oio::Read for VfsReader {
-    /// Read the next chunk of data from the rustic file.
+    /// Lazily opens the file (via [`ensure_open`](VfsReader::ensure_open))
+    /// and returns its metadata.
     ///
-    /// Issues a single [`Repository::read_file_at`] call of up to
-    /// [`BUFFER_SIZE`] bytes (or the remaining window, whichever is smaller)
-    /// and advances the internal position. Returns an empty [`Buffer`] when
-    /// the requested range has been fully consumed.
+    /// The boxed stream itself is a stub for now — this crate doesn't have
+    /// visibility into your `ReadStreamDyn` trait's exact shape, so wire the
+    /// returned stream up to whatever that trait requires (it should reuse
+    /// the already-opened `file`/`repo` handles from `ensure_open`, the same
+    /// way [`read`](oio::Read::read) below does, just yielding chunks over
+    /// time instead of one shot). The lazy-open behavior you asked for is in
+    /// place either way: nothing happens until this method (or `read`) is
+    /// actually called.
+    async fn open(&self, _range: BytesRange) -> opendal::Result<(RpRead, Box<dyn ReadStreamDyn>)> {
+        let (node, _file) = self.ensure_open().await?;
+        let meta = meta_from_node(&node);
+        let _ = meta; // available once the real stream type is wired up
+        Err(unsupported(
+            "oio::Read::open (ReadStreamDyn not wired up — see doc comment)",
+        ))
+    }
+
+    /// Read a chunk of data from the rustic file within `range`.
+    ///
+    /// Lazily resolves the node and opens the file on first call via
+    /// [`ensure_open`](VfsReader::ensure_open), then issues a single
+    /// [`Repository::read_file_at`] call of up to [`BUFFER_SIZE`] bytes (or
+    /// `range`'s size, whichever is smaller), starting at `range`'s offset.
+    /// The returned [`RpRead`] wraps the node's [`Metadata`].
     ///
     /// # Errors
     ///
-    /// Returns [`Unexpected`](opendal_core::ErrorKind::Unexpected) (temporary)
-    /// if the underlying rustic blob read fails.
-    async fn read(&mut self) -> opendal::Result<Buffer> {
-        let read_size = match self.len {
-            Some(0) => return Ok(Buffer::new()),
-            Some(remaining) => BUFFER_SIZE.min(remaining),
+    /// Returns [`NotFound`](opendal::ErrorKind::NotFound) if the path
+    /// doesn't exist, or [`Unexpected`](opendal::ErrorKind::Unexpected)
+    /// (temporary) if the underlying rustic blob read fails.
+    async fn read(&self, range: BytesRange) -> opendal::Result<(RpRead, Buffer)> {
+        let (node, file) = self.ensure_open().await?;
+        let meta = meta_from_node(&node);
+
+        let offset = range.offset() as usize;
+        let read_size = match range.size() {
+            Some(size) => BUFFER_SIZE.min(size as usize),
             None => BUFFER_SIZE,
         };
 
-        let file = self.file.clone();
+        if read_size == 0 {
+            return Ok((RpRead::new(meta), Buffer::new()));
+        }
+
         let repo = self.repo.clone();
-        let pos = self.pos;
-        let data = tokio::task::spawn_blocking(move || repo.read_file_at(&file, pos, read_size))
+        let data = tokio::task::spawn_blocking(move || repo.read_file_at(&file, offset, read_size))
             .await
             .map_err(|e| Error::new(ErrorKind::Unexpected, "join error").set_source(e))?
             .map_err(|e| Error::new(ErrorKind::Unexpected, "read failed").set_source(e))?;
 
-        self.pos += data.len();
-        if let Some(remaining) = self.len.as_mut() {
-            *remaining -= data.len().min(*remaining);
-        }
-
-        Ok(data.into())
+        Ok((RpRead::new(meta), data.into()))
     }
 }
 
@@ -689,28 +821,63 @@ impl oio::Read for VfsReader {
 /// [`oio::List`] implementation that iterates over the direct children of a
 /// rustic VFS directory.
 ///
-/// Each call to [`next`](oio::List::next) pops one [`Node`] from the
-/// pre-fetched child list, computes its OpenDAL path relative to `root`, and
-/// returns an [`Entry`] with the node's metadata.
+/// Like [`VfsReader`], `VfsLister` is lazy: it's constructed with just the
+/// target `root` path and shared `vfs`/`repo` handles, doing no I/O. The
+/// directory's children are fetched only on the first call to
+/// [`next`](oio::List::next), then cached in `nodes` for subsequent calls.
 pub struct VfsLister {
     /// The directory path being listed (used to build child entry paths).
     root: PathBuf,
-    /// Pre-fetched child nodes, consumed one per [`next`](oio::List::next) call.
-    nodes: vec::IntoIter<Node>,
+    /// Shared, refresh-able VFS, used to lazily fetch `root`'s children.
+    vfs: Arc<RwLock<Vfs>>,
+    /// Repository passed through to the VFS lookup.
+    repo: Arc<IndexedRepo>,
+    /// Lazily-populated child-node iterator; `None` until the first
+    /// [`next`](oio::List::next) call.
+    nodes: Option<vec::IntoIter<Node>>,
 }
 
 impl VfsLister {
-    /// Create a new [`VfsLister`].
+    /// Create a new, unloaded [`VfsLister`] for `root`.
+    ///
+    /// Does no I/O; `root`'s children aren't fetched until the first call to
+    /// [`next`](oio::List::next).
     ///
     /// # Arguments
     ///
-    /// * `root`  – Normalised path of the directory being listed.
-    /// * `nodes` – Direct child nodes returned by the rustic VFS.
-    pub(crate) fn new(root: PathBuf, nodes: Vec<Node>) -> Self {
+    /// * `root` – Normalised path of the directory being listed.
+    /// * `vfs`  – Shared VFS used to fetch `root`'s children.
+    /// * `repo` – Repository passed through to the VFS lookup.
+    pub(crate) fn new(root: PathBuf, vfs: Arc<RwLock<Vfs>>, repo: Arc<IndexedRepo>) -> Self {
         Self {
             root,
-            nodes: nodes.into_iter(),
+            vfs,
+            repo,
+            nodes: None,
         }
+    }
+
+    /// Fetch `root`'s children on first call, caching them in `self.nodes`
+    /// for subsequent calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`NotFound`](opendal::ErrorKind::NotFound) if `root` doesn't
+    /// exist or isn't a directory in the current VFS snapshot.
+    async fn ensure_loaded(&mut self) -> opendal::Result<&mut vec::IntoIter<Node>> {
+        if self.nodes.is_none() {
+            let entries = self
+                .vfs
+                .read()
+                .await
+                .dir_entries_from_path(&self.repo, &self.root)
+                .map_err(|e| {
+                    Error::new(ErrorKind::NotFound, "Directory not found in VFS.").set_source(e)
+                })?;
+            self.nodes = Some(entries.into_iter());
+        }
+
+        Ok(self.nodes.as_mut().expect("just populated above"))
     }
 }
 
@@ -721,10 +888,11 @@ impl oio::List for VfsLister {
     /// Entry paths are constructed as `{root}/{node.name}`, with a trailing
     /// `/` appended for directories (as required by OpenDAL's path convention).
     async fn next(&mut self) -> opendal::Result<Option<Entry>> {
-        let entry = self.nodes.next().map(|n| {
-            let base = self.root.to_string_lossy().replace('\\', "/");
-            let base = base.trim_matches('/');
+        let base = self.root.to_string_lossy().replace('\\', "/");
+        let base = base.trim_matches('/').to_string();
 
+        let iter = self.ensure_loaded().await?;
+        let entry = iter.next().map(|n| {
             let mut path = if base.is_empty() {
                 n.name.clone()
             } else {

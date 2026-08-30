@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    CancelToken, FileLister,
+    CancelToken, FileLister, ListAdapter, ListOptions, ReadSource,
     archiver::{Archiver, parent::Parent},
     error::{ErrorKind, RusticError, RusticResult},
     repofile::{
@@ -162,6 +162,11 @@ pub struct BackupOptions {
     #[serde(flatten)]
     /// Options how to use a parent snapshot
     pub parent_opts: ParentOptions,
+
+    #[cfg_attr(feature = "clap", clap(flatten))]
+    #[serde(flatten)]
+    /// Options how to list the information.
+    pub source_opts: ListOptions,
 }
 
 /// Backup data, create a snapshot.
@@ -190,21 +195,19 @@ pub struct BackupOptions {
 /// # Returns
 ///
 /// The snapshot pointing to the backup'ed data.
-pub(crate) fn backup<R, S>(
+pub(crate) fn backup<S>(
     repo: &Repository<S>,
     opts: &BackupOptions,
-    src: R,
+    src: &impl ReadSource,
     mut snap: SnapshotFile,
+    backup_paths: &[PathBuf],
     token: CancelToken,
 ) -> RusticResult<SnapshotFile>
 where
     S: IndexedIds,
-    R: FileLister + 'static,
-    <R as FileLister>::Open: Send,
-    <R as FileLister>::Iter: Send,
 {
     let index = repo.index();
-    let backup_paths = src.roots();
+
     let as_path = opts
         .as_path
         .as_ref()
@@ -224,9 +227,9 @@ where
 
     let paths = as_path
         .as_ref()
-        .map_or(backup_paths.clone(), |p| vec![p.clone()]);
+        .map_or(backup_paths, |p| std::slice::from_ref(p));
 
-    snap.paths.set_paths(&paths).map_err(|err| {
+    snap.paths.set_paths(paths).map_err(|err| {
         RusticError::with_source(
             ErrorKind::Internal,
             "Failed to set paths `{paths}` in snapshot.",
@@ -252,16 +255,31 @@ where
 
     let be = DryRunBackend::new(repo.dbe().clone(), opts.dry_run);
     info!("starting to backup {backup_paths:?} ...");
-    let archiver = Archiver::new(be, index, repo.config(), parent, snap)?;
+    let archiver = Archiver::new(be, index, src, repo.config(), parent, snap)?;
     let p = repo.progress_bytes("backing up...");
-    let snap = archiver.archive(
-        &src,
-        Some(as_path.as_ref().unwrap_or(&backup_paths[0])),
+    let src = ListAdapter::with_options_multi(src, backup_paths, opts.source_opts.clone()).map_err(
+        |err| {
+            RusticError::with_source(
+                ErrorKind::Internal,
+                "Failed to list `{paths}` in snapshot.",
+                err,
+            )
+            .attach_context(
+                "paths",
+                backup_paths
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .join(","),
+            )
+        },
+    )?;
+
+    archiver.archive(
+        src,
+        as_path.as_ref(),
         opts.parent_opts.skip_if_unchanged,
         opts.no_scan,
         &p,
-        token,
-    )?;
-    src.close()?;
-    Ok(snap)
+        token
+    )
 }

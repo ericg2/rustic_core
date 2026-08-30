@@ -1,235 +1,330 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     io,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
-use crate::{File, FilterOptions, ListOptions, Metadata, Node, NodeType, ReadSource, WriteSource, backend::filters::{ExcludeFilter, GitIgnoreFilter}};
+use crate::backend::filters::GitignoreLayers;
+use crate::{
+    File, FilterOptions, ListOptions, Node, NodeType, ReadSource, WriteSource,
+    backend::filters::ExcludeFilter,
+};
 
-/// A single pending directory to expand, along with the ancestor chain of
-/// already-loaded gitignore directories (top-down) needed to filter its
-/// children.
+/// Walks deeper than this are treated as a symlink loop or pathological
+/// input and aborted with an error, rather than running forever.
+const MAX_DEPTH: usize = 10_000;
+
+/// A directory queued for expansion, plus the gitignore ancestor chain
+/// needed to filter its children.
 #[derive(Clone, Debug)]
 struct PendingDir {
+    /// Absolute path of the directory to expand.
     path: PathBuf,
+    /// Chain of ancestor directories (from the owning root down to
+    /// `path`'s parent) whose gitignore rules apply to this directory's
+    /// children, in order.
     gitignore_ancestors: Vec<PathBuf>,
-    /// Expected device id for entries in this directory, when
-    /// `one_file_system` is enabled (`None` = check disabled). Propagated
-    /// from parent to child as directories are expanded, so this always
-    /// reflects the *immediate parent's* device id — matching
-    /// `ignore::WalkBuilder::same_file_system`'s per-directory boundary
-    /// semantics rather than a single fixed comparison against the walk
-    /// root.
+    /// Device id of the root this directory descends from, used to
+    /// enforce `one_file_system` filtering. `None` when that filter is
+    /// disabled.
     device_id: Option<u64>,
+    /// Depth of `path` below its owning root (root itself is depth 0).
+    depth: usize,
 }
 
-/// Iterator adapter that lists (optionally recursively) the contents of a
-/// [`WriteSource`], applying [`FilterOptions`] and glob/gitignore excludes.
+/// Lists (optionally recursively) the contents of one or more
+/// [`WriteSource`] paths, applying [`FilterOptions`] and glob/gitignore
+/// excludes.
 ///
-/// This is conceptually similar to a local `ignore::WalkBuilder`-based
-/// walker, but drives its own BFS traversal and its own gitignore/override
-/// matching by hand, since it must work over an arbitrary backend
-/// (including virtualized/non-filesystem sources) rather than `std::fs`.
+/// Matches the filtering behavior of `ignore::WalkBuilder`, including
+/// `.gitignore`, `.git/info/exclude`, and custom ignore files, but drives
+/// it against an arbitrary [`ReadSource`] backend instead of `std::fs`.
 ///
-/// All [`FilterOptions`] fields are honored:
-/// - `git_ignore` / `no_require_git` / `custom_ignorefiles`: see
-///   [`GitignoreFilter`], which also honors `.git/info/exclude` at the
-///   repo root.
-/// - `exclude_if_present`: any marker file directly inside a directory
-///   excludes that directory's entire contents (children never
-///   emitted or descended into).
-/// - `exclude_if_xattr`: entries with a matching extended attribute name
-///   (as reported by the backend's [`Metadata::extended_attributes`]) are
-///   excluded.
-/// - `exclude_larger_than`: non-directory entries larger than this are
-///   excluded.
-/// - `one_file_system`: entries whose `Metadata::device_id` differs from
-///   their parent directory's device id are excluded (and, if a
-///   directory, never descended into). The root's own device id is
-///   captured once at construction time and used as the initial parent
-///   device id.
-///
-/// Sibling entries within a directory are yielded in sorted path order,
-/// matching `sort_by_file_path(Path::cmp)` on a local `ignore` walker,
-/// while still streaming: only one directory's children are ever held in
-/// memory at a time.
-///
-/// Symlinks are assumed to be reported as-is (not followed) by the
-/// backend's `readdir`/`Node` implementation; this adapter does not
-/// itself perform any symlink resolution.
-pub struct ListAdapter {
-    be: Arc<dyn WriteSource>,
-    root: PathBuf,
+/// When constructed with multiple roots, each root is walked
+/// independently with its own gitignore ancestor chain and (if
+/// `one_file_system` is set) its own device id, but all roots share a
+/// single symlink-cycle guard so a directory reachable from two roots is
+/// only descended into once.
+pub struct ListAdapter<'a, R: ReadSource> {
+    be: &'a R,
+    roots: Vec<PathBuf>,
     recursive: bool,
-    excludes: Option<ExcludeFilter>,
-    gitignore: GitIgnoreFilter,
     filter_opts: FilterOptions,
+    excludes: Option<ExcludeFilter>,
+    gitignore: GitignoreLayers<'a, R>,
+
     dirs: VecDeque<PendingDir>,
     current_batch: VecDeque<File>,
+    /// Guards against symlink cycles when the backend reports a
+    /// symlinked directory as a plain directory, and against revisiting
+    /// a directory reachable from more than one root.
+    visited_dirs: HashSet<PathBuf>,
 }
 
-impl ListAdapter {
-    /// Creates a new lister rooted at `root`.
+impl<'a, R: ReadSource> ListAdapter<'a, R> {
+    /// Returns the backend this lister reads from.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the [`ReadSource`] backend supplied at construction.
+    pub fn rbe(&self) -> &'a R {
+        &self.be
+    }
+
+    /// Creates a lister rooted at a single `root`, using default
+    /// [`ListOptions`].
+    ///
+    /// # Arguments
+    ///
+    /// * `be` - The backend to read directory entries and metadata from.
+    /// * `root` - The single path to walk.
     ///
     /// # Errors
     ///
-    /// Returns an error if `root` cannot be stat'd (only required when
-    /// `one_file_system` is enabled) or if the initial gitignore layer
-    /// fails to load.
-    pub fn new(be: Arc<dyn WriteSource>, root: impl AsRef<Path>, opts: ListOptions) -> io::Result<Self> {
-        let root = root.as_ref();
-        let filter_opts = opts.filters.unwrap_or_default();
+    /// * If `root` cannot be stat'd or read from the backend.
+    ///
+    /// # Returns
+    ///
+    /// A [`ListAdapter`] ready to be iterated.
+    pub fn new(be: &'a R, root: impl AsRef<Path>) -> io::Result<Self> {
+        Self::with_options(be, root, ListOptions::default())
+    }
 
+    /// Creates a lister rooted at a single `root` with custom
+    /// [`ListOptions`].
+    ///
+    /// # Arguments
+    ///
+    /// * `be` - The backend to read directory entries and metadata from.
+    /// * `root` - The single path to walk.
+    /// * `opts` - Filtering, exclude, and recursion options.
+    ///
+    /// # Errors
+    ///
+    /// * If `root` does not exist or cannot be stat'd (when
+    ///   `one_file_system` is enabled).
+    /// * If `opts.excludes` contains an invalid glob pattern.
+    ///
+    /// # Returns
+    ///
+    /// A [`ListAdapter`] ready to be iterated.
+    pub fn with_options(be: &'a R, root: impl AsRef<Path>, opts: ListOptions) -> io::Result<Self> {
+        Self::with_options_multi(be, [root], opts)
+    }
+
+    /// Creates a lister that walks several roots, using default [`ListOptions`].
+    ///
+    /// # Arguments
+    ///
+    /// * `be` - The backend to read directory entries and metadata from.
+    /// * `roots` - The paths to walk, in iteration order.
+    ///
+    /// # Errors
+    ///
+    /// * If any root cannot be stat'd or read from the backend.
+    ///
+    /// # Returns
+    ///
+    /// A [`ListAdapter`] ready to be iterated.
+    pub fn new_multi<I, P>(be: &'a R, roots: I) -> io::Result<Self>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        Self::with_options_multi(be, roots, ListOptions::default())
+    }
+
+    /// Creates a lister that walks several roots with custom
+    /// [`ListOptions`].
+    ///
+    /// Roots are walked in the order given. Each root gets its own
+    /// gitignore ancestor chain (so a `.gitignore` above one root has no
+    /// effect on another), but the symlink-cycle guard is shared across
+    /// all roots, so a directory reachable from more than one root is
+    /// only yielded once, from whichever root reaches it first.
+    ///
+    /// # Arguments
+    ///
+    /// * `be` - The backend to read directory entries and metadata from.
+    /// * `roots` - The paths to walk, in iteration order.
+    /// * `opts` - Filtering, exclude, and recursion options.
+    ///
+    /// # Errors
+    ///
+    /// * If any root does not exist or cannot be stat'd (when
+    ///   `one_file_system` is enabled).
+    /// * If `opts.excludes` contains an invalid glob pattern.
+    ///
+    /// # Returns
+    ///
+    /// A [`ListAdapter`] ready to be iterated.
+    pub fn with_options_multi<I, P>(be: &'a R, roots: I, opts: ListOptions) -> io::Result<Self>
+    where
+        I: IntoIterator<Item = P>,
+        P: AsRef<Path>,
+    {
+        let roots: Vec<PathBuf> = roots
+            .into_iter()
+            .map(|p| p.as_ref().to_path_buf())
+            .collect();
+
+        let filter_opts = opts.filters.unwrap_or_default();
         let excludes = match opts.excludes {
             Some(ref ex) if !ex.is_empty() => Some(ExcludeFilter::new(ex)?),
             _ => None,
         };
 
-        let read: Arc<dyn ReadSource> = be.clone();
-        let gitignore = GitIgnoreFilter::new(read, &filter_opts);
-        if gitignore.enabled() {
-            gitignore.load_dir(root)?;
-        }
-
-        let root_device_id = if filter_opts.one_file_system {
-            let meta = be.stat(root)?.ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("root path `{}` does not exist", root.display()),
-                )
-            })?;
-            Some(meta.device_id)
-        } else {
-            None
-        };
-
+        let mut gitignore = GitignoreLayers::new(be, &filter_opts);
         let mut dirs = VecDeque::new();
-        dirs.push_back(PendingDir {
-            path: root.to_path_buf(),
-            gitignore_ancestors: vec![root.to_path_buf()],
-            device_id: root_device_id,
-        });
+        let mut visited_dirs = HashSet::new();
+        for root in &roots {
+            let device_id = if filter_opts.one_file_system {
+                let meta = be.stat(root)?.ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("root path `{}` does not exist", root.display()),
+                    )
+                })?;
+                Some(meta.device_id)
+            } else {
+                None
+            };
+
+            if gitignore.enabled() {
+                gitignore.load_dir(root)?;
+            }
+
+            // Only queue this root if it hasn't already been reached via
+            // an earlier root (e.g. duplicate or nested roots).
+            if visited_dirs.insert(root.clone()) {
+                dirs.push_back(PendingDir {
+                    path: root.clone(),
+                    gitignore_ancestors: vec![root.clone()],
+                    device_id,
+                    depth: 0,
+                });
+            }
+        }
 
         Ok(Self {
             be,
-            root: root.to_path_buf(),
-            recursive: opts.recursive,
+            roots,
+            filter_opts,
             excludes,
             gitignore,
-            filter_opts,
             dirs,
+            visited_dirs,
             current_batch: VecDeque::new(),
+            recursive: !opts.no_recursive,
         })
     }
 
-    /// Returns the root path this lister was constructed with.
+    /// The first root path this lister was constructed with.
+    ///
+    /// For listers constructed from multiple roots, prefer [`Self::roots`].
+    ///
+    /// # Returns
+    ///
+    /// A reference to the first root path.
     pub fn root(&self) -> &Path {
-        &self.root
+        &self.roots[0]
     }
 
-    /// Lists the immediate (non-recursive) children of `dir`, converts
-    /// them into [`File`]s, and applies every metadata-based filter
-    /// (`exclude_if_present`, `exclude_if_xattr`, `exclude_larger_than`,
-    /// `one_file_system`) inline, before the caller applies path-based
-    /// (glob / gitignore) filters. Results are sorted by path for
-    /// deterministic sibling order.
+    /// All root paths this lister was constructed with, in walk order.
     ///
-    /// `expected_device_id` is the device id children must match when
-    /// `one_file_system` is enabled (i.e. `dir`'s own device id, as
-    /// established when `dir` itself was accepted).
+    /// # Returns
+    ///
+    /// A slice over every root path passed at construction.
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
+    }
+
+    /// Lists and filters the immediate children of `dir`, sorted by path.
+    ///
+    /// Applies `exclude_if_present` marker files, `exclude_if_xattr`,
+    /// `exclude_larger_than`, and (when set) `expected_device_id`
+    /// filtering. Does not apply glob excludes or gitignore rules; those
+    /// are applied by the caller.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - The directory whose children should be listed.
+    /// * `expected_device_id` - When `Some`, children on a different
+    ///   device are skipped (implements `one_file_system`).
+    ///
+    /// # Errors
+    ///
+    /// * If the backend fails to stat a marker file or read `dir`.
+    /// * If constructing a [`File`] from a listed entry fails.
+    ///
+    /// # Returns
+    ///
+    /// The filtered, path-sorted children of `dir`.
     fn list_dir_children(
         &self,
         dir: &Path,
         expected_device_id: Option<u64>,
     ) -> io::Result<Vec<File>> {
-        // If any `exclude_if_present` marker exists directly inside `dir`,
-        // the entire directory's contents are excluded (children never
-        // emitted or descended into).
         for marker in &self.filter_opts.exclude_if_present {
             if self.be.stat(&dir.join(marker))?.is_some() {
                 return Ok(Vec::new());
             }
         }
 
-        let entries = self.be.readdir(dir)?;
-        let mut out = Vec::new();
-        for entry in entries {
+        let mut out = Vec::with_capacity(32);
+        for entry in self.be.readdir(dir)? {
             let node: Node = entry?;
-            let name = node.name();
-
-            // The directory listing itself (some backends yield a "." /
-            // empty-name entry for the dir being listed) — skip it.
+            let name = node.name().to_string_lossy().to_string();
             if name.trim_end_matches('/').is_empty() {
                 continue;
             }
-
-            if !self.keep_by_metadata(&node.metadata, node.node_type, expected_device_id) {
-                continue;
-            }
-
-            let child_path = dir.join(name);
-            let file = File::new(
-                child_path,
-                node.node_type,
-                node.metadata,
-                Some(Arc::clone(&self.be) as Arc<dyn ReadSource>),
-                Some(Arc::clone(&self.be) as Arc<dyn WriteSource>),
-            )?;
-
-            out.push(file);
-        }
-
-        // Deterministic sibling order, matching `sort_by_file_path`
-        // (`Path::cmp`) on a local `ignore`-crate walker. This sorts only
-        // the children of a single directory (already fully materialized
-        // above), so the adapter still streams overall: no more than one
-        // directory's worth of entries is ever held in memory at once.
-        out.sort_by(|a, b| a.path.cmp(&b.path));
-
-        Ok(out)
-    }
-
-    /// Applies the purely metadata-based filters: `exclude_if_xattr`,
-    /// `exclude_larger_than`, and `one_file_system`.
-    fn keep_by_metadata(
-        &self,
-        metadata: &Metadata,
-        node_type: NodeType,
-        expected_device_id: Option<u64>,
-    ) -> bool {
-        if !self.filter_opts.exclude_if_xattr.is_empty()
-            && metadata.extended_attributes.iter().any(|xattr| {
+            if node.meta.extended_attributes.iter().any(|xattr| {
                 self.filter_opts
                     .exclude_if_xattr
                     .iter()
                     .any(|excluded| excluded == &xattr.name)
-            })
-        {
-            return false;
-        }
+            }) {
+                continue;
+            }
 
-        if node_type != NodeType::Dir {
-            if let Some(max) = self.filter_opts.exclude_larger_than {
-                if metadata.size > max.as_u64() {
-                    return false;
+            if node.node_type != NodeType::Dir {
+                if let Some(max) = self.filter_opts.exclude_larger_than {
+                    if node.meta.size > max.as_u64() {
+                        continue;
+                    }
                 }
             }
-        }
 
-        if let Some(expected) = expected_device_id {
-            if metadata.device_id != expected {
-                return false;
+            if expected_device_id.is_some_and(|x| x != node.meta.device_id) {
+                continue;
             }
+
+            let child_path = dir.join(&name);
+            out.push(File::new(child_path, node.node_type, node.meta)?);
         }
 
-        true
+        out.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
     }
 }
 
-impl Iterator for ListAdapter {
+impl<'a, R: ReadSource> Iterator for ListAdapter<'a, R> {
     type Item = io::Result<File>;
 
+    /// Advances the walk, returning the next filtered [`File`] across all
+    /// configured roots, or `None` once every root has been fully
+    /// traversed.
+    ///
+    /// # Errors
+    ///
+    /// Yields `Some(Err(_))` if the backend fails to read a directory, a
+    /// [`File`] cannot be constructed from a listed entry, or the walk
+    /// exceeds [`MAX_DEPTH`] below any single root.
+    ///
+    /// # Returns
+    ///
+    /// `Some(Ok(file))` for the next entry, `Some(Err(err))` on failure,
+    /// or `None` when the walk is complete.
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             if let Some(file) = self.current_batch.pop_front() {
@@ -243,22 +338,36 @@ impl Iterator for ListAdapter {
             };
 
             for child in children {
-                // 1. Exclude-glob filtering (top-down, cheap, cached).
                 if let Some(ex) = &self.excludes {
                     if !ex.is_ok(&child) {
                         continue;
                     }
                 }
-
-                // 2. Gitignore filtering, using the ancestor chain of
-                //    already-loaded directories.
-                if self.gitignore.enabled()
-                    && !self.gitignore.is_ok(&child, &pending.gitignore_ancestors)
+                if !self
+                    .gitignore
+                    .is_ok(child.path(), child.is_dir(), &pending.gitignore_ancestors)
                 {
                     continue;
                 }
 
                 if child.is_dir() && self.recursive {
+                    if pending.depth + 1 > MAX_DEPTH {
+                        return Some(Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!(
+                                "max walk depth ({MAX_DEPTH}) exceeded at `{}`",
+                                child.path().display()
+                            ),
+                        )));
+                    }
+                    if !self.visited_dirs.insert(child.path().to_path_buf()) {
+                        // Already seen this path — symlink cycle, duplicate
+                        // backend entry, or overlap between two configured
+                        // roots; skip descending but still yield it.
+                        self.current_batch.push_back(child);
+                        continue;
+                    }
+
                     let mut ancestors = pending.gitignore_ancestors.clone();
                     if self.gitignore.enabled() {
                         if let Err(err) = self.gitignore.load_dir(child.path()) {
@@ -269,21 +378,13 @@ impl Iterator for ListAdapter {
                     self.dirs.push_back(PendingDir {
                         path: child.path().to_path_buf(),
                         gitignore_ancestors: ancestors,
-                        // The child already passed the device-id check in
-                        // `keep_by_metadata` above (or the check is
-                        // disabled), so its device id equals
-                        // `pending.device_id` — propagate as-is rather
-                        // than re-stat'ing.
                         device_id: pending.device_id,
+                        depth: pending.depth + 1,
                     });
                 }
 
                 self.current_batch.push_back(child);
             }
-
-            // Loop again: either we now have a batch to drain, or this
-            // directory was empty/fully filtered and we move to the next
-            // pending directory.
         }
     }
 }

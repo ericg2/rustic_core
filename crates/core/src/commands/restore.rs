@@ -5,7 +5,7 @@ use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
 use crate::{
-    CancelToken, File, FileLister, WriteHandle, WriteSource,
+    CancelToken, File, FileLister, ListAdapter, ListOptions, ReadSource, WriteHandle, WriteSource,
     backend::{
         FileType, ReadBackend,
         decrypt::DecryptReadBackend,
@@ -20,6 +20,7 @@ use bytes::Bytes;
 use dashmap::{DashMap, DashSet};
 use itertools::Itertools;
 use rayon::ThreadPoolBuilder;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -36,7 +37,7 @@ type RestoreInfo = BTreeMap<(PackId, BlobLocation), SmallVec<[FileLocation; 1]>>
 
 #[allow(clippy::struct_excessive_bools)]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[derive(Debug, Copy, Clone, Default, Setters)]
+#[derive(Debug, Clone, Copy, Default, Setters, Serialize, Deserialize)]
 #[setters(into)]
 #[non_exhaustive]
 /// Options for the `restore` command
@@ -128,7 +129,9 @@ pub(crate) fn restore_repository<S: IndexedTree>(
     repo.warm_up_wait(file_infos.to_packs().into_iter())?;
 
     token.check()?;
-    dest.create_dir_all(Path::new("/"))?; // *** create the root directory here.
+    dest.create_dir_all(Path::new("/")).map_err(|err| {
+        RusticError::with_source(ErrorKind::Backend, "Failed to initialize restore.", err)
+    })?; // *** create the root directory here.
     restore_contents(
         repo,
         dest,
@@ -152,18 +155,19 @@ pub(crate) fn restore_repository<S: IndexedTree>(
 
     Ok(())
 }
-
 /// Collect restore information, scan existing files, create needed dirs and remove superfluous files
 ///
 /// # Type Parameters
 ///
-/// * `P` - The progress bar type.
+/// * `R` - The type of the destination's `ReadSource`, walked via `src`.
 /// * `S` - The type of the indexed tree.
 ///
 /// # Arguments
 ///
 /// * `repo` - The repository to restore.
+/// * `opts` - The restore options.
 /// * `node_streamer` - The node streamer to use.
+/// * `src` - Lister over the existing entries at `dest`, used to diff against `node_streamer`.
 /// * `dest` - The destination to restore to.
 /// * `dry_run` - If true, don't actually restore anything, but only print out what would be done.
 ///
@@ -172,29 +176,29 @@ pub(crate) fn restore_repository<S: IndexedTree>(
 /// * If a directory could not be created.
 /// * If the restore information could not be collected.
 #[allow(clippy::too_many_lines)]
-pub(crate) fn collect_and_prepare<S, W>(
+pub(crate) fn collect_and_prepare<R, S>(
     repo: &Repository<S>,
     opts: RestoreOptions,
     mut node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
-    mut walker: W,
-    dest: &impl WriteSource,
+    dest: &R,
     dry_run: bool,
     token: CancelToken,
 ) -> RusticResult<RestorePlan>
 where
+    R: WriteSource,
     S: IndexedFull,
-    W: FileLister,
 {
     token.check()?;
 
     let p = repo.progress_spinner("collecting file information...");
-    dest.create_dir_all(Path::new("/"))?; // *** create the root directory here
+    dest.create_dir_all(Path::new("/")).map_err(|err| {
+        RusticError::with_source(ErrorKind::Backend, "Failed to initialize restore.", err)
+    })?; // *** create the root directory here.
 
     let mut stats = RestoreStats::default();
     let mut restore_infos = RestorePlan::default();
     let mut additional_existing = false;
     let skip_dirs = DashSet::<PathBuf>::new();
-
     let clean_path = |path: &Path| -> PathBuf {
         Path::new(
             path.to_string_lossy()
@@ -205,7 +209,10 @@ where
         .to_path_buf()
     };
 
-    let next_entry = |walker: &mut W| -> Option<File<O>> {
+    // Pulls the next entry out of `src`, skipping anything under a
+    // directory we've already decided to skip (an "additional" dir we're
+    // not descending into).
+    let next_entry = |walker: &mut ListAdapter<'_, R>| -> Option<File> {
         walker
             .inspect(|r| {
                 if let Err(err) = r {
@@ -213,10 +220,10 @@ where
                 }
             })
             .find_map(|x| {
-                if let Some(ret) = x.ok() {
-                    if !skip_dirs.iter().any(|x| {
+                if let Ok(ret) = x {
+                    if !skip_dirs.iter().any(|d| {
                         let check_a = clean_path(&ret.path);
-                        let check_b = clean_path(x.key());
+                        let check_b = clean_path(d.key());
                         check_a.starts_with(check_b)
                     }) {
                         // We need to strip the prefix from the path to avoid "additionals".
@@ -227,53 +234,54 @@ where
             })
     };
 
-    let mut process_existing = |walker: &mut W, entry: &File| -> RusticResult<Option<File>> {
-        if clean_path(&entry.path) == clean_path(Path::new("/")) {
-            // don't process the root dir which should be existing
-            return Ok(next_entry(walker));
-        }
+    let mut process_existing =
+        |walker: &mut ListAdapter<'_, R>, entry: &File| -> RusticResult<Option<File>> {
+            if clean_path(&entry.path) == clean_path(Path::new("/")) {
+                // don't process the root dir which should be existing
+                return Ok(next_entry(walker));
+            }
 
-        debug!("additional {}", entry.path.display());
-        let is_dir = entry.node.is_dir();
-        if is_dir {
-            stats.dirs.additional += 1;
-        } else {
-            stats.files.additional += 1;
-        }
-        match (opts.delete, dry_run, is_dir) {
-            (true, true, true) => {
-                info!(
-                    "would have removed the additional dir: {}",
-                    entry.path.display()
-                );
+            debug!("additional {}", entry.path.display());
+            let is_dir = entry.is_dir();
+            if is_dir {
+                stats.dirs.additional += 1;
+            } else {
+                stats.files.additional += 1;
             }
-            (true, true, false) => {
-                info!(
-                    "would have removed the additional file: {}",
-                    entry.path.display()
-                );
-            }
-            (true, false, true) => {
-                if let Err(err) = dest.remove_dir(&entry.path) {
-                    error!("error removing {}: {err}", entry.path.display());
+            match (opts.delete, dry_run, is_dir) {
+                (true, true, true) => {
+                    info!(
+                        "would have removed the additional dir: {}",
+                        entry.path.display()
+                    );
+                }
+                (true, true, false) => {
+                    info!(
+                        "would have removed the additional file: {}",
+                        entry.path.display()
+                    );
+                }
+                (true, false, true) => {
+                    if let Err(err) = dest.remove_dir(&entry.path) {
+                        error!("error removing {}: {err}", entry.path.display());
+                    }
+                }
+                (true, false, false) => {
+                    if let Err(err) = dest.remove_file(&entry.path) {
+                        error!("error removing {}: {err}", entry.path.display());
+                    }
+                }
+                (false, _, _) => {
+                    additional_existing = true;
                 }
             }
-            (true, false, false) => {
-                if let Err(err) = dest.remove_file(&entry.path) {
-                    error!("error removing {}: {err}", entry.path.display());
-                }
-            }
-            (false, _, _) => {
-                additional_existing = true;
-            }
-        }
 
-        // don't descend into extra dirs
-        if is_dir {
-            let _ = skip_dirs.insert(entry.path.clone());
-        }
-        Ok(next_entry(walker))
-    };
+            // don't descend into extra dirs
+            if is_dir {
+                let _ = skip_dirs.insert(entry.path.clone());
+            }
+            Ok(next_entry(walker))
+        };
 
     let mut process_node = |path: &PathBuf, node: &Node, exists: bool| -> RusticResult<_> {
         match node.node_type {
@@ -346,7 +354,14 @@ where
         Ok(())
     };
 
-    let mut next_dst = next_entry(&mut walker);
+    let mut src = ListAdapter::new(dest, "/").map_err(|err| {
+        RusticError::with_source(
+            ErrorKind::InputOutput,
+            "Failed to create list adapter for destination.",
+            err,
+        )
+    })?;
+    let mut next_dst = next_entry(&mut src);
     let mut next_node = node_streamer.next().transpose()?;
     loop {
         // Check at the top of every iteration so we stop cleanly between
@@ -357,7 +372,7 @@ where
             (None, None) => break,
 
             (Some(destination), None) => {
-                next_dst = process_existing(&mut walker, destination)?;
+                next_dst = process_existing(&mut src, destination)?;
             }
             (Some(destination), Some((path, node))) => {
                 let path_a = clean_path(&destination.path);
@@ -365,18 +380,18 @@ where
                 trace!("comparing {:?} with {:?}", &path_a, &path_b);
                 match path_a.cmp(&path_b) {
                     Ordering::Less => {
-                        next_dst = process_existing(&mut walker, destination)?;
+                        next_dst = process_existing(&mut src, destination)?;
                     }
                     Ordering::Equal => {
                         // process existing node
-                        if (node.is_dir() && !destination.node.is_dir())
-                            || (node.is_file() && !destination.node.is_file())
+                        if (node.is_dir() && !destination.is_dir())
+                            || (node.is_file() && !destination.is_file())
                             || node.is_special()
                         {
                             // if types do not match, first remove the existing file
-                            next_dst = process_existing(&mut walker, destination)?;
+                            next_dst = process_existing(&mut src, destination)?;
                         } else {
-                            next_dst = next_entry(&mut walker);
+                            next_dst = next_entry(&mut src);
                         }
                         process_node(path, node, true)?;
                         next_node = node_streamer.next().transpose()?;
@@ -563,17 +578,18 @@ fn restore_contents<S: Open>(
     for (i, size) in file_lengths.iter().enumerate() {
         if *size == 0 {
             let path = &filenames[i];
-            if let Some(parent) = path.parent() {
-                dest.create_dir_all(parent)?;
-            }
-            dest.set_length(path, 0).map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::InputOutput,
-                    "Failed to set the length of the file `{path}`. Please check the path and try again.",
-                    err,
-                )
+            path.parent()
+                .map(|parent| dest.create_dir_all(parent))
+                .unwrap_or(Ok(()))
+                .and_then(|_| dest.set_length(path, 0))
+                .map_err(|err| {
+                    RusticError::with_source(
+                        ErrorKind::InputOutput,
+                        "Failed to prepare the file `{path}`. Please check the path and try again.",
+                        err,
+                    )
                     .attach_context("path", path.display().to_string())
-            })?;
+                })?;
         }
     }
 
@@ -674,7 +690,7 @@ fn restore_contents<S: Open>(
                         let offset: u64 = *offset_file;
                         let path = &filenames[*file_idx];
                         let mut buf = vec![0; length as usize];
-                        let mut file = dest.get_reader(path).and_then(|x| x.open()).unwrap();
+                        let mut file = dest.open_read(path).unwrap();
                         let _ = file.seek(SeekFrom::Start(offset)).unwrap();
                         file.read_exact(&mut buf).unwrap();
                         Bytes::from(buf)
@@ -744,7 +760,7 @@ fn restore_contents<S: Open>(
                                 );
                                 let handle = state.handle.get_or_insert_with(|| {
                                     debug!("Opening write handle to {:?}", path);
-                                    Box::new(dest.get_writer(path).unwrap().open_replace().unwrap())
+                                    dest.open_replace(path).unwrap()
                                 });
                                 handle.write_all(&data).unwrap();
                                 handle.flush().unwrap();
@@ -763,7 +779,9 @@ fn restore_contents<S: Open>(
     for (state_mutex, _) in write_state {
         let mut state = state_mutex.lock().unwrap();
         if let Some(mut handle) = state.handle.take() {
-            handle.close()?;
+            if handle.close().is_err() {
+                warn!("Failed to close file handle for path.");
+            }
         }
     }
 
@@ -847,7 +865,11 @@ impl RestorePlan {
         no_read: bool,
     ) -> RusticResult<AddFileResult> {
         let existing_file = dest
-            .get_existing(&name)?
+            .stat(&name)
+            .map_err(|err| {
+                RusticError::with_source(ErrorKind::Backend, "Failed to lookup file `{path}`", err)
+                    .attach_context("path", name.display().to_string())
+            })?
             .filter(|meta| meta.size == file.meta.size);
 
         // Empty files which exists with correct size should always return Ok(Existing)!
@@ -874,7 +896,14 @@ impl RestorePlan {
         // In that case every blob below is treated as unverified; the mtime check
         // above is the only way this file can come back as Existing/Verified.
         let mut open = if !no_read && existing_file.is_some() {
-            Some(dest.get_reader(&name)?.open()?)
+            Some(dest.open_read(&name).map_err(|err| {
+                RusticError::with_source(
+                    ErrorKind::Backend,
+                    "Failed to open `{path}` for reading.",
+                    err,
+                )
+                .attach_context("path", name.display().to_string())
+            })?)
         } else {
             None
         };

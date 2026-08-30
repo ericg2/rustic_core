@@ -1,5 +1,5 @@
 //! `restore` example
-use rustic_backend::local::LocalDestination;
+use rustic_backend::local::{LocalSource};
 use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_core::{
     CancelToken, Credentials, LsOptions, Repository, RepositoryOptions, RestoreOptions,
@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let ls = repo.ls(&node, &streamer_opts)?;
 
     let destination = "./restore/"; // restore to this destination dir
-    let dest = LocalDestination::new(destination);
+    let dest = LocalSource::new(destination);
     let opts = RestoreOptions::default();
     let dry_run = false;
 

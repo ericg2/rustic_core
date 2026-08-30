@@ -7,9 +7,10 @@ pub(crate) mod filters;
 pub(crate) mod hotcold;
 pub(crate) mod list;
 pub(crate) mod node;
-pub(crate) mod repo;
 pub(crate) mod token;
 pub(crate) mod warm_up;
+mod ignore;
+mod command;
 
 use bytes::Bytes;
 use derive_setters::Setters;
@@ -103,9 +104,6 @@ pub struct File {
 
     /// The [`Metadata`] of the entry.
     pub metadata: Metadata,
-
-    _reader: Option<Arc<dyn ReadSource>>,
-    _writer: Option<Arc<dyn WriteSource>>,
 }
 
 impl File {
@@ -114,86 +112,17 @@ impl File {
     fn node(&self) -> Node {
         Node::new_node(
             OsStr::new(&self.name),
-            self.node_type,
+            self.node_type.clone(),
             self.metadata.clone(),
         )
     }
 
-    /// Opens `path` for reading.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file could not be opened.
-    fn open_read(&self) -> io::Result<Box<dyn ReadHandle>> {
-        self._reader
-            .ok_or(io::ErrorKind::Unsupported)?
-            .open_read(&self.path)
-    }
-
-    /// Sets restore-related metadata (timestamps, permissions, etc.) for an
-    /// object. Exact semantics depend on the backend.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the metadata could not be set.
-    fn set_restore_metadata(&self, node: &Node, opts: &RestoreOptions) -> io::Result<()> {
-        self._writer
-            .ok_or(io::ErrorKind::Unsupported)?
-            .set_restore_metadata(&self.path, node, opts)
-    }
-
-    /// Sets the length of `path` (relative to the base path). Truncates or
-    /// extends an existing file, or creates a new empty file of that
-    /// length if it doesn't exist.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the parent directory is missing/uncreatable, the
-    /// file could not be opened, or the length could not be set.
-    fn set_length(&self, size: u64) -> io::Result<()> {
-        self._writer
-            .ok_or(io::ErrorKind::Unsupported)?
-            .set_length(&self.path, size)
-    }
-
-    /// Opens `path` for writing (replacing its contents).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file could not be opened, or if `path`
-    /// refers to a directory.
-    fn open_replace(&self) -> io::Result<Box<dyn WriteHandle>> {
-        self._writer
-            .ok_or(io::ErrorKind::Unsupported)?
-            .open_replace(&self.path)
-    }
-
-    /// Writes all bytes in an atomic way.
-    fn write_all(&self, bytes: Bytes) -> io::Result<()> {
-        self._writer
-            .ok_or(io::ErrorKind::Unsupported)?
-            .write_all(&self.path, bytes)
-    }
-
-    /// Writes `data` to `path` at the given byte `offset`. Creates the file
-    /// if it does not already exist.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file could not be opened/sought, the
-    /// backend does not support random writes (check
-    /// [`can_random_write`](WriteSource::can_random_write) first), or the
-    /// data could not be written.
-    fn write_at(&self, offset: u64, data: &[u8]) -> io::Result<()> {
-        self._writer
-            .ok_or(io::ErrorKind::Unsupported)?
-            .write_at(&self.path, offset, data)
-    }
+    pub fn name(&self) -> &str { &self.name }
 
     /// Consumes this entry, turning it into a `(path, node)` pair suitable
     /// for insertion into a tree.
-    pub fn as_tree_entry(self) -> (PathBuf, Node) {
-        (self.path, self.node)
+    pub fn into_tree(self) -> (PathBuf, Node) {
+        (self.path.clone(), self.node())
     }
 
     pub fn metadata(&self) -> &Metadata {
@@ -205,11 +134,11 @@ impl File {
     }
 
     pub fn is_file(&self) -> bool {
-        self.metadata.is_file()
+        self.node_type == NodeType::File
     }
 
     pub fn is_dir(&self) -> bool {
-        self.metadata.is_dir()
+        self.node_type == NodeType::Dir
     }
 
     pub fn size(&self) -> u64 {
@@ -231,14 +160,12 @@ impl File {
         path: PathBuf,
         node_type: NodeType,
         metadata: Metadata,
-        reader: Option<Arc<dyn ReadSource>>,
-        writer: Option<Arc<dyn WriteSource>>,
     ) -> io::Result<Self> {
         let name = path
             .file_name()
             .ok_or(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("Path not allowed: {}", path.clone()),
+                format!("Path not allowed: {}", path.display()),
             ))?
             .to_string_lossy()
             .to_string();
@@ -247,8 +174,6 @@ impl File {
             name,
             node_type,
             metadata,
-            _reader: reader,
-            _writer: writer,
         })
     }
 }
@@ -323,16 +248,24 @@ pub trait FileLister: Iterator<Item = io::Result<File>> + Sync + Send + 'static 
 #[non_exhaustive]
 pub struct ListOptions {
     /// Optional exclusion rules used to skip matching paths during the listing.
+    #[cfg_attr(feature = "clap", clap(flatten, next_help_heading = "Exclude options"))]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
+    #[serde(flatten)]
     pub excludes: Option<Excludes>,
 
     /// Optional filters used to determine which entries are returned.
+    #[cfg_attr(feature = "clap", clap(flatten, next_help_heading = "Filter options"))]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
+    #[serde(flatten)]
     pub filters: Option<FilterOptions>,
 
     /// Whether to recursively traverse subdirectories.
     ///
-    /// If `true`, all matching entries within the directory tree are returned.
-    /// If `false`, only the immediate children of the specified directory are listed.
-    pub recursive: bool,
+    /// If `false`, all matching entries within the directory tree are returned.
+    /// If `true`, only the immediate children of the specified directory are listed.
+    #[cfg_attr(feature = "clap", clap(long))]
+    #[cfg_attr(feature = "merge", merge(strategy = conflate::bool::overwrite_false))]
+    pub no_recursive: bool,
 }
 
 /// A configuration that can be built into a [`ReadSource`].
@@ -371,8 +304,6 @@ pub trait WriteSourceConfig: Serialize + DeserializeOwned + Send + Sync {
     fn build(self) -> io::Result<Self::Writer>;
 }
 
-/// Blanket impl: every [`WriteSourceConfig`] can be fallibly converted into
-///
 /// Trait for a backend that can be read from as a source of files.
 ///
 /// # Dyn-compatibility
@@ -396,8 +327,7 @@ pub trait ReadSource: Send + Sync + 'static {
     ///
     /// # Errors
     /// Returns an error if the source listing failed.
-    fn readdir(&self, path: &Path)
-    -> io::Result<Box<dyn Iterator<Item = io::Result<Node>> + Send>>;
+    fn readdir(&self, path: &Path) -> io::Result<Box<dyn Iterator<Item = io::Result<Node>> + Send>>;
 
     /// Returns metadata for `path`, if it exists.
     ///
@@ -861,7 +791,22 @@ impl Debug for dyn WriteBackend {
 // }
 
 /// Trait for repository backends.
-pub trait BackendConfig: Debug + Send + Sync {
+pub trait BackendConfig: Serialize + DeserializeOwned + Clone + Debug + Send + Sync {
+    /// The [`WriteBackend`] returned by this config.
+    type Output: WriteBackend;
+
+    /// Creates the [`BackendConfig`] from an iterator.
+    ///
+    /// # Important
+    /// This does not guarantee the [`BackendConfig`] is initialized correctly. Due to the
+    /// nature of dynamic types - this feature is only a convenience. All invalid fields will
+    /// be skipped, and will not return an error during the process.
+    fn from_iter<K, V, I>(path: impl AsRef<str>, dict: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>;
+
     /// # Returns
     ///
     /// A string [`Path`] of the [`BackendConfig`].
@@ -879,7 +824,7 @@ pub trait BackendConfig: Debug + Send + Sync {
     /// # Errors
     /// * If the backend could not be created.
     /// * If the configuration is invalid.
-    fn get_source(&self) -> RusticResult<Arc<dyn WriteSource>>;
+    fn get_repo(&self) -> RusticResult<Self::Output>;
 }
 
 /// The backends a repository can be initialized and operated on
@@ -904,10 +849,10 @@ impl RepositoryBackends {
     ///
     /// * `repository` - The main repository of this [`RepositoryBackends`].
     /// * `repo_hot` - The hot repository of this [`RepositoryBackends`].
-    pub fn new(repository: Arc<dyn WriteBackend>) -> Self {
+    pub fn new(repository: Arc<dyn WriteBackend>, repo_hot: Option<Arc<dyn WriteBackend>>) -> Self {
         Self {
             repository,
-            repo_hot: None,
+            repo_hot,
         }
     }
 

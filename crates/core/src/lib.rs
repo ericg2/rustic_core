@@ -143,6 +143,7 @@ pub use crate::{
             },
         },
         token::CancelToken,
+        list::ListAdapter,
     },
     blob::{
         BlobId, DataId, PackedId,

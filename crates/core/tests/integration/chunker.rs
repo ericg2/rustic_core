@@ -24,8 +24,6 @@ fn test_chunker_params(
     // Fixtures
     let (source, mut repo) = (tar_gz_testdata?, set_up_repo?.to_indexed_ids()?);
 
-    let paths = &source.path_list();
-
     // set fixed size chunker with a given chunk size
     let config_opts = ConfigOptions::default()
         .set_chunker(Chunker::FixedSize)
@@ -34,7 +32,7 @@ fn test_chunker_params(
     assert!(repo.apply_config(&config_opts)?);
 
     // we use as_path to not depend on the actual tempdir
-    let src = LocalSource::new(paths);
+    let src = LocalSource::new(source.path());
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
     let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 

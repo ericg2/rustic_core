@@ -98,7 +98,7 @@ impl RestBackend {
     ///
     /// * If the url could not be parsed.
     /// * If the client could not be built.
-    pub(crate) fn new(config: &RestConfig) -> RusticResult<Self> {
+    pub fn from_config(config: &RestConfig) -> RusticResult<Self> {
         let url = config
             .url
             .clone()

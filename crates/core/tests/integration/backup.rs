@@ -31,13 +31,11 @@ fn test_backup_with_tar_gz_passes(
     // Fixtures
     let (source, repo) = (tar_gz_testdata?, set_up_repo?.to_indexed_ids()?);
 
-    let paths = &source.path_list();
-
     // we use as_path to not depend on the actual tempdir
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
 
     // first backup
-    let src = LocalSource::new(paths);
+    let src = LocalSource::new(source.path());
     let first_snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // We can also bind to scope ( https://docs.rs/insta/latest/insta/struct.Settings.html#method.bind_to_scope )
@@ -158,15 +156,13 @@ fn test_backup_dry_run_with_tar_gz_passes(
     // Fixtures
     let (source, repo) = (tar_gz_testdata?, set_up_repo?.to_indexed_ids()?);
 
-    let paths = &source.path_list();
-
     // we use as_path to not depend on the actual tempdir
     let opts = BackupOptions::default()
         .as_path(PathBuf::from_str("test")?)
         .dry_run(true);
 
     // dry-run backup
-    let src = LocalSource::new(paths);
+    let src = LocalSource::new(source.path());
     let snap_dry_run = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     insta_snapshotfile_redaction.bind(|| {

@@ -570,7 +570,9 @@ where
         node: &Node,
         opts: &TreeStreamerOptions,
     ) -> RusticResult<Self> {
-        let overrides = opts.excludes.as_override()?;
+        let overrides = opts.excludes.as_override().map_err(|err| {
+            RusticError::with_source(ErrorKind::Configuration, "Failed to get overrides.", err)
+        })?;
         Self::new_streamer(be, index, node, Some(overrides), opts.recursive)
     }
 }

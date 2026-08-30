@@ -1,24 +1,21 @@
 use bytes::Bytes;
-use log::{error, trace};
 use opendal::blocking::{Operator, StdReader, StdWriter};
 use opendal::layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer};
-use opendal::options::ReadOptions;
+use opendal::options::{DeleteOptions, ListOptions, WriteOptions};
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::sync::OnceLock;
+use opendal::Buffer;
 use tokio::runtime::Runtime;
 use typed_path::UnixPathBuf;
 
-use crate::opendal::OpenDALSourceConfig;
 use crate::opendal::config::{OpenDALConfig, Retry, Throttle};
-use crate::opendal::lister::OpenDALWalker;
 use crate::opendal::log::OpenLogLayer;
-use crate::opendal::source::OpenDALReader;
 use rustic_core::{
-    ALL_FILE_TYPES, ErrorKind, FileLister, FileType, Id, ListOptions, Metadata, Node, NodeType,
-    ReadBackend, ReadHandle, ReadSource, ReadSourceConfig, RusticError, RusticResult, WriteBackend,
-    WriteHandle, WriteSource,
+    ErrorKind, FileLister, FileType, Id, Metadata, Node, NodeType, ReadBackend, ReadHandle,
+    ReadSource, ReadSourceConfig, RusticError, RusticResult, WriteBackend, WriteHandle,
+    WriteSource,
 };
 
 mod constants {
@@ -124,6 +121,16 @@ impl OpenDALSource {
         r.replace("\\", "/") // *** fix for windows-style directories
     }
 
+    pub(crate) fn resolve_meta(meta: &opendal::Metadata) -> Metadata {
+        Metadata {
+            atime: meta
+                .last_modified()
+                .map(opendal::raw::Timestamp::into_inner),
+            size: meta.content_length(),
+            ..Default::default()
+        }
+    }
+
     /// Return a path for the given file type and id.
     ///
     /// # Arguments
@@ -205,46 +212,48 @@ impl ReadSource for OpenDALSource {
         Ok(Box::new(OpenDALRead(handle)))
     }
 
-    fn stat(&self, path: &Path) -> std::io::Result<Option<rustic_core::Metadata>> {
-        let path = Self::fix_path(path, false);
-        match self.0.stat(&path) {
-            Ok(meta) => Ok(Some(Self::resolve_meta(meta))),
-            Err(err) if err.kind() == opendal::ErrorKind::NotFound => return Ok(None),
-            Err(err) => return Err(err.into()),
-        }
-    }
-
     fn readdir(
         &self,
         path: &Path,
     ) -> io::Result<Box<dyn Iterator<Item = io::Result<Node>> + Send>> {
         let path = Self::fix_path(path, true);
-        let lister = self.0.lister(&path)?.map(|entry| {
-            let entry = entry?;
-            let meta = entry.metadata();
-            let node_type = if meta.is_dir() {
-                NodeType::Dir
-            } else {
-                NodeType::File
-            };
-
-            Ok(Node::new(
-                entry.name().to_string(),
-                node_type,
-                Metadata {
-                    atime: meta
-                        .last_modified()
-                        .map(opendal::raw::Timestamp::into_inner),
-                    size: meta.content_length(),
+        let lister = self
+            .0
+            .lister_options(
+                &path,
+                ListOptions {
+                    recursive: false,
                     ..Default::default()
                 },
-                None,
-                None,
-                None,
-            ))
-        });
+            )?
+            .map(|entry| {
+                let entry = entry?;
+                let meta = entry.metadata();
+                let node_type = if meta.is_dir() {
+                    NodeType::Dir
+                } else {
+                    NodeType::File
+                };
+
+                Ok(Node::new(
+                    entry.name().to_string(),
+                    node_type,
+                    Self::resolve_meta(meta),
+                    None,
+                    None,
+                ))
+            });
 
         Ok(Box::new(lister))
+    }
+
+    fn stat(&self, path: &Path) -> std::io::Result<Option<rustic_core::Metadata>> {
+        let path = Self::fix_path(path, false);
+        match self.0.stat(&path) {
+            Ok(meta) => Ok(Some(Self::resolve_meta(&meta))),
+            Err(err) if err.kind() == opendal::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err.into()),
+        }
     }
 }
 
@@ -271,9 +280,7 @@ impl WriteSource for OpenDALSource {
         let path = Self::fix_path(path, true);
         if path != "/" {
             // OpenDAL does not allow creating a root directory. Don't do this on restore!
-            self.0.create_dir(&path).map_err(|err| {
-                RusticError::with_source(ErrorKind::Backend, "Failed to read directory", err)
-            })?;
+            self.0.create_dir(&path)?;
         }
         Ok(())
     }
@@ -290,7 +297,7 @@ impl WriteSource for OpenDALSource {
     fn set_length(&self, path: &Path, size: u64) -> std::io::Result<()> {
         let path = Self::fix_path(path, false);
         if size == 0 {
-            self.0.write(&path, vec![])?;
+            self.0.write(&path, Buffer::new())?;
             return Ok(());
         }
 
@@ -317,11 +324,11 @@ impl WriteSource for OpenDALSource {
 
     fn write_all(&self, path: &Path, bytes: Bytes) -> std::io::Result<()> {
         let path = Self::fix_path(path, false);
-        self.0.write(&path, bytes.into())?;
+        self.0.write(&path, bytes)?;
         Ok(())
     }
 
-    fn write_at(&self, path: &Path, offset: u64, data: &[u8]) -> std::io::Result<()> {
+    fn write_at(&self, _path: &Path, offset: u64, data: &[u8]) -> std::io::Result<()> {
         Err(io::ErrorKind::Unsupported.into())
     }
 

@@ -6,7 +6,7 @@ use binrw::{BinRead, BinWrite};
 use derive_more::{Constructor, Display};
 use log::debug;
 use rand::{Rng, rng};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     FileType,

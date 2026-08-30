@@ -37,20 +37,18 @@ impl RcloneConfig {
             rest_url: None,
         }
     }
+}
 
-    /// Creates a [`RcloneRepo`] from an iterator.
-    ///
-    /// # Important
-    /// This does not guarantee the [`RcloneRepo`] is initialized correctly. Due to the
-    /// nature of dynamic types - this feature is only a convenience. All invalid fields will
-    /// be skipped, and will not return an error during this process.
-    pub fn from_iter<K, V, I>(url: impl AsRef<str>, dict: I) -> Self
+impl BackendConfig for RcloneConfig {
+    type Output = RcloneBackend;
+
+    fn from_iter<K, V, I>(path: impl AsRef<str>, dict: I) -> Self
     where
-        I: IntoIterator<Item = (K, V)>,
+        I: IntoIterator<Item=(K, V)>,
         K: Into<String>,
-        V: Into<String>,
+        V: Into<String>
     {
-        let mut config = Self::new(url);
+        let mut config = Self::new(path);
         for (k, v) in dict {
             let key = k.into();
             let value = v.into();
@@ -71,9 +69,7 @@ impl RcloneConfig {
 
         config
     }
-}
 
-impl BackendConfig for RcloneConfig {
     fn get_path(&self) -> Option<String> {
         self.url.clone().map(|x| format!("rclone:{}", &x))
     }
@@ -84,8 +80,7 @@ impl BackendConfig for RcloneConfig {
         ret
     }
 
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-        let ret = RcloneBackend::from_config(&self)?;
-        Ok(Arc::new(ret))
+    fn get_repo(&self) -> RusticResult<Self::Output> {
+        RcloneBackend::from_config(&self)
     }
 }

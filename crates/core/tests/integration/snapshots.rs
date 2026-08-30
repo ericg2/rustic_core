@@ -37,7 +37,7 @@ fn repo_and_snapshots() -> (Repository<IndexedIdsStatus>, Vec<SnapshotFile>) {
 
     // we use as_path to not depend on the actual tempdir
     let backup_options = BackupOptions::default().as_path(PathBuf::from_str("test").unwrap());
-    let src = LocalSource::new(&source.path_list());
+    let src = LocalSource::new(source.path());
     for snap_ts in snapshot_timestamp {
         let snapshot_file = repo
             .backup(

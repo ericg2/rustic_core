@@ -39,9 +39,8 @@ fn backup_single_file(
         .set_chunker(Chunker::FixedSize)
         .set_chunk_size(ByteSize(4096));
     assert!(repo.apply_config(&config)?);
-
-    let paths = PathList::from_iter([file_path]);
-    let src = LocalSource::new(paths);
+    
+    let src = LocalSource::new(&file_path);
     let opts = BackupOptions::default().as_path(PathBuf::from_str(name)?);
     let _snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 

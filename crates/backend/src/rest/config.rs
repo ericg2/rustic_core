@@ -88,7 +88,7 @@ pub struct RestConfig {
 }
 
 impl RestConfig {
-    /// Creates a new [`RestRepo`] with the given URI.
+    /// Creates a new [`RestConfig`] with the given URI.
     pub fn new(url: impl AsRef<str>) -> Self {
         Self {
             url: Some(url.as_ref().to_string()),
@@ -104,19 +104,61 @@ impl RestConfig {
         }
     }
 
-    /// Creates a [`RestRepo`] from an iterator.
+    /// Sets the CA Cert [`Certificate`] from an encoded string.
+    pub fn ca_cert(mut self, cert: impl Into<Option<String>>) -> Self {
+        self.ca_cert = cert.into();
+        self
+    }
+
+    /// Retrieves the CA Root [`Certificate`] from a local file.
     ///
-    /// # Important
-    /// This does not guarantee the [`RestRepo`] is initialized correctly. Due to the
-    /// nature of dynamic types - this feature is only a convenience. All invalid fields will
-    /// be skipped, and will not return an error during this process.
-    pub fn from_iter<K, V, I>(url: impl AsRef<str>, dict: I) -> Self
+    /// # Arguments
+    /// * `path` - The [`Path`] to read from.
+    ///
+    /// # Errors
+    /// * If the [`Path`] does not exist.
+    /// * If the file is not a valid CA [`Certificate`].
+    ///
+    /// # Notes
+    /// The file does not need to exist after success. The contents will be dumped.
+    pub fn ca_cert_file(mut self, path: impl AsRef<Path>) -> RusticResult<Self> {
+        self.ca_cert = Some(read_file_contents("cacert", path)?);
+        Ok(self)
+    }
+
+    /// Retrieves the TLS Client [`Identity`] from a local file.
+    ///
+    /// # Arguments
+    /// * `path` - The [`Path`] to read from.
+    ///
+    /// # Errors
+    /// * If the [`Path`] does not exist.
+    /// * If the file is not a valid TLS Client [`Identity`]
+    ///
+    /// # Notes
+    /// The file does not need to exist after success. The contents will be dumped.
+    pub fn tls_client_file(mut self, path: impl AsRef<Path>) -> RusticResult<Self> {
+        self.tls_client_cert = Some(read_file_contents("tls-client-cert", path)?);
+        Ok(self)
+    }
+
+    /// Sets the TLS Client [`Identity`] from an encoded string.
+    pub fn tls_client_cert(mut self, cert: impl Into<Option<String>>) -> Self {
+        self.tls_client_cert = cert.into();
+        self
+    }
+}
+
+impl BackendConfig for RestConfig {
+    type Output = RestBackend;
+
+    fn from_iter<K, V, I>(path: impl AsRef<str>, dict: I) -> Self
     where
-        I: IntoIterator<Item = (K, V)>,
+        I: IntoIterator<Item=(K, V)>,
         K: Into<String>,
-        V: Into<String>,
+        V: Into<String>
     {
-        let mut config = Self::new(url);
+        let mut config = Self::new(path);
         for (k, v) in dict {
             let key = k.into();
             let value = v.into();
@@ -166,52 +208,6 @@ impl RestConfig {
         config
     }
 
-    /// Sets the CA Cert [`Certificate`] from an encoded string.
-    pub fn ca_cert(mut self, cert: impl Into<Option<String>>) -> Self {
-        self.ca_cert = cert.into();
-        self
-    }
-
-    /// Retrieves the CA Root [`Certificate`] from a local file.
-    ///
-    /// # Arguments
-    /// * `path` - The [`Path`] to read from.
-    ///
-    /// # Errors
-    /// * If the [`Path`] does not exist.
-    /// * If the file is not a valid CA [`Certificate`].
-    ///
-    /// # Notes
-    /// The file does not need to exist after success. The contents will be dumped.
-    pub fn ca_cert_file(mut self, path: impl AsRef<Path>) -> RusticResult<Self> {
-        self.ca_cert = Some(read_file_contents("cacert", path)?);
-        Ok(self)
-    }
-
-    /// Retrieves the TLS Client [`Identity`] from a local file.
-    ///
-    /// # Arguments
-    /// * `path` - The [`Path`] to read from.
-    ///
-    /// # Errors
-    /// * If the [`Path`] does not exist.
-    /// * If the file is not a valid TLS Client [`Identity`]
-    ///
-    /// # Notes
-    /// The file does not need to exist after success. The contents will be dumped.
-    pub fn tls_client_file(mut self, path: impl AsRef<Path>) -> RusticResult<Self> {
-        self.tls_client_cert = Some(read_file_contents("tls-client-cert", path)?);
-        Ok(self)
-    }
-
-    /// Sets the TLS Client [`Identity`] from an encoded string.
-    pub fn tls_client_cert(mut self, cert: impl Into<Option<String>>) -> Self {
-        self.tls_client_cert = cert.into();
-        self
-    }
-}
-
-impl BackendConfig for RestConfig {
     fn get_path(&self) -> Option<String> {
         self.url.clone().map(|x| format!("rest:{}", &x))
     }
@@ -222,8 +218,7 @@ impl BackendConfig for RestConfig {
         ret
     }
 
-    fn get_repo(&self) -> RusticResult<Arc<dyn WriteBackend>> {
-        let ret = RestBackend::new(&self)?;
-        Ok(Arc::new(ret))
+    fn get_repo(&self) -> RusticResult<Self::Output> {
+        RestBackend::from_config(&self)
     }
 }

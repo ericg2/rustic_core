@@ -27,6 +27,7 @@ use serde_with::serde_as;
 use rustic_core::{BackendConfig, ErrorKind, RusticError, RusticResult, WriteBackend, WriteSource};
 
 use crate::opendal::OpenDALSource;
+use crate::repo::RepoAdapter;
 
 /// Throttling parameters for an OpenDAL backend, expressed as a token-bucket
 /// rate limiter: a sustained `bandwidth` (bytes/sec) and a `burst` capacity
@@ -173,14 +174,10 @@ pub struct OpenDALConfig {
     pub retry: Option<Retry>,
 }
 
-impl OpenDALConfig {
-    /// Creates an [`OpenDALConfig`] from an iterator.
-    ///
-    /// # Important
-    /// This does not guarantee the [`OpenDALConfig`] is initialized correctly. Due to the
-    /// nature of dynamic types - this feature is only a convenience. All invalid fields will
-    /// be skipped, and will not return an error during this process.
-    pub fn from_iter<K, V, I>(scheme: impl AsRef<str>, dict: I) -> Self
+impl BackendConfig for OpenDALConfig {
+    type Output = RepoAdapter<OpenDALSource>;
+
+    fn from_iter<K, V, I>(path: impl AsRef<str>, dict: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<String>,
@@ -211,7 +208,7 @@ impl OpenDALConfig {
         }
 
         Self {
-            scheme: Some(scheme.as_ref().to_string()),
+            scheme: Some(path.as_ref().to_string()),
             options,
             throttle,
             connections,
@@ -219,12 +216,6 @@ impl OpenDALConfig {
         }
     }
 
-    pub fn build(self) -> RusticResult<OpenDALSource> {
-        OpenDALSource::from_config(&self)
-    }
-}
-
-impl BackendConfig for OpenDALConfig {
     /// Returns the config "path" as `opendal:<scheme>`, or [`None`] if no
     /// scheme is set.
     fn get_path(&self) -> Option<String> {
@@ -254,8 +245,8 @@ impl BackendConfig for OpenDALConfig {
         ret
     }
 
-    fn get_source(&self) -> RusticResult<Arc<dyn WriteSource>> {
-        let be = OpenDALSource::from_config(config)?;
-        Ok(Arc::new(be))
+    fn get_repo(&self) -> RusticResult<Self::Output> {
+        let src = OpenDALSource::from_config(self)?;
+        Ok(RepoAdapter::new(src))
     }
 }

@@ -3,14 +3,18 @@ use std::fmt::Debug;
 use std::{collections::BTreeMap, sync::Arc};
 use strum::{Display, EnumString};
 
-use rustic_core::{BackendConfig, BackendOptions, ErrorKind, RepositoryBackends, RusticError, RusticResult, WriteBackend, WriteSource};
+use rustic_core::{
+    BackendConfig, BackendOptions, ErrorKind, RepositoryBackends, RepositoryOptions, RusticError,
+    RusticResult, WriteBackend, WriteSource,
+};
 
 use crate::util::{BackendLocation, location_to_type_and_path};
 
-use crate::local::LocalConfig;
-use crate::opendal::OpenDALConfig;
-use crate::rclone::RcloneConfig;
-use crate::rest::RestConfig;
+use crate::local::{LocalConfig, LocalSource};
+use crate::opendal::{OpenDALConfig, OpenDALSource};
+use crate::rclone::{RcloneBackend, RcloneConfig};
+use crate::repo::RepoAdapter;
+use crate::rest::{RestBackend, RestConfig};
 #[cfg(feature = "clap")]
 use clap::ValueHint;
 
@@ -22,13 +26,12 @@ impl BackendBuilder for BackendOptions {
     fn to_backends(&self) -> RusticResult<RepositoryBackends> {
         let mut options = self.options.clone();
         options.extend(self.options_cold.clone());
-        let be = get_backend(self.repository.as_ref(), options)?
-            .ok_or_else(|| {
-                RusticError::new(
-                    ErrorKind::Backend,
-                    "No repository given. Please make sure, that you have set the repository.",
-                )
-            })?;
+        let be = get_backend(self.repository.as_ref(), options)?.ok_or_else(|| {
+            RusticError::new(
+                ErrorKind::Backend,
+                "No repository given. Please make sure, that you have set the repository.",
+            )
+        })?;
         let mut options = self.options.clone();
         options.extend(self.options_hot.clone());
         let be_hot = get_backend(self.repo_hot.as_ref(), options)?;
@@ -104,7 +107,6 @@ pub enum SupportedBackend {
     OpenDAL,
 }
 
-
 impl BackendChoice for SupportedBackend {
     fn to_backend(
         &self,
@@ -112,15 +114,32 @@ impl BackendChoice for SupportedBackend {
         options: Option<BTreeMap<String, String>>,
     ) -> RusticResult<Arc<dyn WriteBackend>> {
         let options = options.unwrap_or_default();
-        Ok(match self {
-            Self::Local => Arc::new(LocalConfig::from_iter(location, options)),
+        let backend: Arc<dyn WriteBackend> = match self {
+            Self::Local => {
+                let config = LocalConfig::from_iter(location, options);
+                let repo = config.get_repo()?;
+                Arc::new(repo)
+            }
             #[cfg(feature = "rclone")]
-            Self::Rclone => Arc::new(RcloneConfig::from_iter(location, options)),
+            Self::Rclone => {
+                let config = RcloneConfig::from_iter(location, options);
+                let repo = config.get_repo()?;
+                Arc::new(repo)
+            }
             #[cfg(feature = "rest")]
-            Self::Rest => Arc::new(RestConfig::from_iter(location, options)),
+            Self::Rest => {
+                let config = RestConfig::from_iter(location, options);
+                let repo = config.get_repo()?;
+                Arc::new(repo)
+            }
             #[cfg(feature = "opendal")]
-            Self::OpenDAL => Arc::new(OpenDALConfig::from_iter(location, options)),
-        })
+            Self::OpenDAL => {
+                let config = OpenDALConfig::from_iter(location, options);
+                let repo = config.get_repo()?;
+                Arc::new(repo)
+            }
+        };
+        Ok(backend)
     }
 }
 

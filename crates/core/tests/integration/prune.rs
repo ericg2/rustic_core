@@ -37,21 +37,21 @@ fn test_prune(
     let opts = BackupOptions::default();
 
     // first backup
-    let paths = PathList::from_iter(Some(source.0.path().join("0/0/9")));
+    let paths = source.0.path().join("0/0/9");
     let src = LocalSource::new(&paths);
     let snapshot1 = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // second backup
-    let paths = PathList::from_iter(Some(source.0.path().join("0/0/9/2")));
+    let paths = source.0.path().join("0/0/9/2");
     let src = LocalSource::new(&paths);
     let _ = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // third backup
-    let paths = PathList::from_iter(Some(source.0.path().join("0/0/9/3")));
+    let paths = source.0.path().join("0/0/9/3");
     let src = LocalSource::new(&paths);
     let _ = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
 

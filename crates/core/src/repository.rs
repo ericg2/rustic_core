@@ -19,12 +19,13 @@ use log::info;
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    CancelToken, FileLister, RepositoryBackends, RusticError, WriteSource,
+    CancelToken, FileLister, ReadSource, RepositoryBackends, RusticError, WriteSource,
     backend::{
         FileType, FindInBackend, ReadBackend, WriteBackend,
         cache::{Cache, CachedBackend},
         decrypt::{DecryptBackend, DecryptReadBackend, DecryptWriteBackend},
         hotcold::HotColdBackend,
+        list::ListAdapter,
         node::Node,
         warm_up::WarmUpAccessBackend,
     },
@@ -1681,7 +1682,7 @@ impl<S: IndexedTree> Repository<S> {
 impl<S: IndexedIds> Repository<S> {
     /// Run a backup of `source` using the given options.
     ///
-    /// You have to give a preflled [`SnapshotFile`] which is modified and saved.
+    /// You have to give a pre-filled [`SnapshotFile`] which is modified and saved.
     ///
     /// # Arguments
     ///
@@ -1696,19 +1697,42 @@ impl<S: IndexedIds> Repository<S> {
     /// # Returns
     ///
     /// The saved snapshot.
-    pub fn backup<R>(
+    pub fn backup_with(
         &self,
         opts: &BackupOptions,
-        source: &R,
+        src: &impl ReadSource,
+        snap: SnapshotFile,
+        paths: PathList,
+        token: CancelToken,
+    ) -> RusticResult<SnapshotFile> {
+        commands::backup::backup(self, opts, src, snap, &*paths.0, token)
+    }
+
+    /// Run a backup of `source` using the given options.
+    ///
+    /// You have to give a pre-filled [`SnapshotFile`] which is modified and saved.
+    ///
+    /// # Arguments
+    ///
+    /// * `opts` - The options to use
+    /// * `source` - The source to backup
+    /// * `snap` - The snapshot to modify and save
+    ///
+    /// # Errors
+    ///
+    // TODO: Document errors
+    ///
+    /// # Returns
+    ///
+    /// The saved snapshot.
+    pub fn backup(
+        &self,
+        opts: &BackupOptions,
+        src: &impl ReadSource,
         snap: SnapshotFile,
         token: CancelToken,
-    ) -> RusticResult<SnapshotFile>
-    where
-        R: ReadSourceConfig + 'static,
-        <<R as ReadSourceConfig>::Reader as FileLister>::Iter: Send,
-        <<R as ReadSourceConfig>::Reader as FileLister>::Open: Send,
-    {
-        commands::backup::backup(self, opts, source.get_reader()?, snap, token)
+    ) -> RusticResult<SnapshotFile> {
+        commands::backup::backup(self, opts, src, snap, &["/".into()], token)
     }
 }
 
@@ -1808,13 +1832,11 @@ impl<S: IndexedFull> Repository<S> {
         &self,
         opts: &RestoreOptions,
         node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
-        dest: &impl DestinationConfig,
+        dest: &impl WriteSource,
         dry_run: bool,
         token: CancelToken,
     ) -> RusticResult<RestorePlan> {
-        let dest = dest.get_destination()?;
-        let walker = dest.read_source()?.entries();
-        collect_and_prepare(self, *opts, node_streamer, walker, &dest, dry_run, token)
+        collect_and_prepare(self, *opts, node_streamer, dest, dry_run, token)
     }
 
     /// Copy the given `snapshots` to `repo_dest`.

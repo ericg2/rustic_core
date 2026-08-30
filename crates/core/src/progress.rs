@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use log::info;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 /// A progress used to indicate/update the status of something which is being processed
 #[derive(Debug, Clone)]

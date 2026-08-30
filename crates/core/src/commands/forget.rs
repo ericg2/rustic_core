@@ -2,7 +2,7 @@
 
 use derive_setters::Setters;
 use jiff::{Span, Zoned};
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as, skip_serializing_none};
 
 use crate::{

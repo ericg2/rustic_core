@@ -110,7 +110,6 @@ pub struct Node {
     ///
     /// This should be only set for directories. (TODO: Check if this is correct)
     pub subtree: Option<TreeId>,
-    pub device_id: Option<u64>,
 }
 
 #[serde_as]
