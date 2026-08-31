@@ -55,6 +55,7 @@ impl ReadSource for LocalSource {
         &self,
         path: &Path,
     ) -> io::Result<Box<dyn Iterator<Item = io::Result<Node>> + Send>> {
+        let path = self.fix_path(path);
         let entries = fs::read_dir(path)?.map(|entry| {
             let entry = entry?;
             let metadata = entry.metadata()?;
@@ -104,6 +105,7 @@ impl WriteSource for LocalSource {
         node: &rustic_core::Node,
         opts: &rustic_core::RestoreOptions,
     ) -> std::io::Result<()> {
+        let path = &self.fix_path(path);
         mapper::create_special(path, node)
             .unwrap_or_else(|_| warn!("restore {}: creating special file failed.", path.display()));
         match (opts.no_ownership, opts.numeric_id) {
@@ -203,6 +205,7 @@ impl WriteSource for LocalSource {
     }
 
     fn write_at(&self, path: &Path, offset: u64, data: &[u8]) -> std::io::Result<()> {
+        let path = self.fix_path(path);
         let mut file = OpenOptions::new()
             .create(true)
             .truncate(false)

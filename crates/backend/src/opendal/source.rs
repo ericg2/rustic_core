@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use opendal::Buffer;
 use opendal::blocking::{Operator, StdReader, StdWriter};
 use opendal::layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer};
 use opendal::options::{DeleteOptions, ListOptions, WriteOptions};
@@ -6,7 +7,6 @@ use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::sync::OnceLock;
-use opendal::Buffer;
 use tokio::runtime::Runtime;
 use typed_path::UnixPathBuf;
 
@@ -43,11 +43,13 @@ fn runtime() -> tokio::runtime::Handle {
 
 /// `OpenDALSource` contains a wrapper around a blocking operator of the `OpenDAL` library.
 #[derive(Clone, Debug)]
-pub struct OpenDALSource(pub(crate) Operator);
+pub struct OpenDALSource {
+    op: Operator,
+}
 
 impl OpenDALSource {
     pub fn new(op: Operator) -> Self {
-        Self(op)
+        Self { op }
     }
 
     pub fn from_config(config: &OpenDALConfig) -> RusticResult<Self> {
@@ -86,17 +88,16 @@ impl OpenDALSource {
         }
 
         let _guard = runtime().enter();
-        let operator =
-            Operator::new(operator.layer(LoggingLayer::new(OpenLogLayer))).map_err(|err| {
-                RusticError::with_source(
-                    ErrorKind::Backend,
-                    "Creating blocking Operator from scheme `{scheme}` failed.",
-                    err,
-                )
-                .attach_context("scheme", scheme.to_string())
-            })?;
+        let op = Operator::new(operator.layer(LoggingLayer::new(OpenLogLayer))).map_err(|err| {
+            RusticError::with_source(
+                ErrorKind::Backend,
+                "Creating blocking Operator from scheme `{scheme}` failed.",
+                err,
+            )
+            .attach_context("scheme", scheme.to_string())
+        })?;
 
-        Ok(Self(operator))
+        Ok(Self { op })
     }
 
     /// Converts a [`Path`] into an OpenDAL-supported [`String`].
@@ -154,10 +155,6 @@ impl OpenDALSource {
         }
         .to_string()
     }
-
-    pub fn from_operator(op: Operator) -> Self {
-        Self(op)
-    }
 }
 
 struct OpenDALWrite(StdWriter);
@@ -202,13 +199,13 @@ impl Seek for OpenDALRead {
 
 impl ReadSource for OpenDALSource {
     fn location(&self) -> String {
-        let info = self.0.info();
+        let info = self.op.info();
         format!("opendal:{}:{}", info.scheme(), info.name())
     }
 
     fn open_read(&self, path: &Path) -> std::io::Result<Box<dyn ReadHandle>> {
         let path = Self::fix_path(path, false);
-        let handle = self.0.reader(&path)?.into_std_read(..)?;
+        let handle = self.op.reader(&path)?.into_std_read(..)?;
         Ok(Box::new(OpenDALRead(handle)))
     }
 
@@ -218,7 +215,7 @@ impl ReadSource for OpenDALSource {
     ) -> io::Result<Box<dyn Iterator<Item = io::Result<Node>> + Send>> {
         let path = Self::fix_path(path, true);
         let lister = self
-            .0
+            .op
             .lister_options(
                 &path,
                 ListOptions {
@@ -249,7 +246,7 @@ impl ReadSource for OpenDALSource {
 
     fn stat(&self, path: &Path) -> std::io::Result<Option<rustic_core::Metadata>> {
         let path = Self::fix_path(path, false);
-        match self.0.stat(&path) {
+        match self.op.stat(&path) {
             Ok(meta) => Ok(Some(Self::resolve_meta(&meta))),
             Err(err) if err.kind() == opendal::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err.into()),
@@ -260,7 +257,7 @@ impl ReadSource for OpenDALSource {
 impl WriteSource for OpenDALSource {
     fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
         let path = Self::fix_path(path, true);
-        self.0.delete_options(
+        self.op.delete_options(
             &path,
             DeleteOptions {
                 recursive: true,
@@ -272,7 +269,7 @@ impl WriteSource for OpenDALSource {
 
     fn remove_file(&self, path: &Path) -> std::io::Result<()> {
         let path = Self::fix_path(path, false);
-        self.0.delete(&path)?;
+        self.op.delete(&path)?;
         Ok(())
     }
 
@@ -280,7 +277,7 @@ impl WriteSource for OpenDALSource {
         let path = Self::fix_path(path, true);
         if path != "/" {
             // OpenDAL does not allow creating a root directory. Don't do this on restore!
-            self.0.create_dir(&path)?;
+            self.op.create_dir(&path)?;
         }
         Ok(())
     }
@@ -297,7 +294,7 @@ impl WriteSource for OpenDALSource {
     fn set_length(&self, path: &Path, size: u64) -> std::io::Result<()> {
         let path = Self::fix_path(path, false);
         if size == 0 {
-            self.0.write(&path, Buffer::new())?;
+            self.op.write(&path, Buffer::new())?;
             return Ok(());
         }
 
@@ -310,7 +307,7 @@ impl WriteSource for OpenDALSource {
 
     fn open_replace(&self, path: &Path) -> std::io::Result<Box<dyn WriteHandle>> {
         let handle = self
-            .0
+            .op
             .writer_options(
                 &path.to_string_lossy().to_string(),
                 WriteOptions {
@@ -324,7 +321,7 @@ impl WriteSource for OpenDALSource {
 
     fn write_all(&self, path: &Path, bytes: Bytes) -> std::io::Result<()> {
         let path = Self::fix_path(path, false);
-        self.0.write(&path, bytes)?;
+        self.op.write(&path, bytes)?;
         Ok(())
     }
 
