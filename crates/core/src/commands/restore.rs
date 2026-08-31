@@ -129,7 +129,7 @@ pub(crate) fn restore_repository<S: IndexedTree>(
     repo.warm_up_wait(file_infos.to_packs().into_iter())?;
 
     token.check()?;
-    dest.create_dir_all(Path::new("/")).map_err(|err| {
+    dest.create_dir_all(Path::new(&file_infos.root)).map_err(|err| {
         RusticError::with_source(ErrorKind::Backend, "Failed to initialize restore.", err)
     })?; // *** create the root directory here.
     restore_contents(
@@ -181,6 +181,7 @@ pub(crate) fn collect_and_prepare<R, S>(
     opts: RestoreOptions,
     mut node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
     dest: &R,
+    dest_path: &PathBuf,
     dry_run: bool,
     token: CancelToken,
 ) -> RusticResult<RestorePlan>
@@ -191,7 +192,7 @@ where
     token.check()?;
 
     let p = repo.progress_spinner("collecting file information...");
-    dest.create_dir_all(Path::new("/")).map_err(|err| {
+    dest.create_dir_all(Path::new(dest_path)).map_err(|err| {
         RusticError::with_source(ErrorKind::Backend, "Failed to initialize restore.", err)
     })?; // *** create the root directory here.
 
@@ -354,7 +355,7 @@ where
         Ok(())
     };
 
-    let mut src = ListAdapter::new(dest, "/").map_err(|err| {
+    let mut src = ListAdapter::new(dest, dest_path).map_err(|err| {
         RusticError::with_source(
             ErrorKind::InputOutput,
             "Failed to create list adapter for destination.",
@@ -414,6 +415,7 @@ where
     }
 
     restore_infos.stats = stats;
+    restore_infos.root = dest_path.clone();
     p.finish();
 
     Ok(restore_infos)
@@ -798,6 +800,8 @@ fn restore_contents<S: Open>(
 /// 4) Statistical information
 #[derive(Debug, Default)]
 pub struct RestorePlan {
+    /// The root to restore from.
+    root: PathBuf,
     /// The names of the files to restore
     names: Filenames,
     /// The length of the files to restore

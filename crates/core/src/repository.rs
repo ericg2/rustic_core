@@ -1833,10 +1833,19 @@ impl<S: IndexedFull> Repository<S> {
         opts: &RestoreOptions,
         node_streamer: impl Iterator<Item = RusticResult<(PathBuf, Node)>>,
         dest: &impl WriteSource,
+        dest_path: impl AsRef<Path>,
         dry_run: bool,
         token: CancelToken,
     ) -> RusticResult<RestorePlan> {
-        collect_and_prepare(self, *opts, node_streamer, dest, dry_run, token)
+        collect_and_prepare(
+            self,
+            *opts,
+            node_streamer,
+            dest,
+            &dest_path.as_ref().to_path_buf(),
+            dry_run,
+            token,
+        )
     }
 
     /// Copy the given `snapshots` to `repo_dest`.
