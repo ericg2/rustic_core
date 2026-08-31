@@ -251,9 +251,10 @@ const DEFAULT_PATH: &str = "[{hostname}]/[{label}]/{time}";
 const DEFAULT_TIME: &str = "%Y-%m-%d_%H-%M-%S";
 
 /// Number of bytes read from the rustic blob store in a single
-/// [`oio::Read::read`] call when the caller doesn't bound the range. 4 MiB
-/// keeps individual allocations modest while amortizing per-call overhead
-/// over a reasonable chunk of data.
+/// [`oio::Read::read`] call, or a single [`oio::ReadStream::read`] chunk,
+/// when the caller doesn't bound the request. 4 MiB keeps individual
+/// allocations modest while amortizing per-call overhead over a reasonable
+/// chunk of data.
 const BUFFER_SIZE: usize = 4_000_000;
 
 /// A standard "this backend is read-only" error, reused by every mutating
@@ -759,24 +760,29 @@ impl VfsReader {
 }
 
 impl oio::Read for VfsReader {
-    /// Lazily opens the file (via [`ensure_open`](VfsReader::ensure_open))
-    /// and returns its metadata.
+    /// Open a chunked [`ReadStreamDyn`] over `range`.
     ///
-    /// The boxed stream itself is a stub for now — this crate doesn't have
-    /// visibility into your `ReadStreamDyn` trait's exact shape, so wire the
-    /// returned stream up to whatever that trait requires (it should reuse
-    /// the already-opened `file`/`repo` handles from `ensure_open`, the same
-    /// way [`read`](oio::Read::read) below does, just yielding chunks over
-    /// time instead of one shot). The lazy-open behavior you asked for is in
-    /// place either way: nothing happens until this method (or `read`) is
-    /// actually called.
-    async fn open(&self, _range: BytesRange) -> opendal::Result<(RpRead, Box<dyn ReadStreamDyn>)> {
-        let (node, _file) = self.ensure_open().await?;
+    /// Resolves the node and opens the rustic file once (via
+    /// [`ensure_open`](VfsReader::ensure_open) — the same cached path
+    /// [`read`](oio::Read::read) uses), then hands back a [`VfsReadStream`]
+    /// that pulls successive [`BUFFER_SIZE`] chunks out of the already-open
+    /// rustic file lazily, on each [`ReadStream::read`] call, instead of
+    /// buffering the whole `range` up front.
+    async fn open(&self, range: BytesRange) -> opendal::Result<(RpRead, Box<dyn ReadStreamDyn>)> {
+        let (node, file) = self.ensure_open().await?;
         let meta = meta_from_node(&node);
-        let _ = meta; // available once the real stream type is wired up
-        Err(unsupported(
-            "oio::Read::open (ReadStreamDyn not wired up — see doc comment)",
-        ))
+
+        let start = range.offset() as usize;
+        let end = range.size().map(|size| start + size as usize);
+
+        let stream = VfsReadStream {
+            repo: self.repo.clone(),
+            file,
+            offset: start,
+            end,
+        };
+
+        Ok((RpRead::new(meta), Box::new(stream)))
     }
 
     /// Read a chunk of data from the rustic file within `range`.
@@ -813,6 +819,63 @@ impl oio::Read for VfsReader {
             .map_err(|e| Error::new(ErrorKind::Unexpected, "read failed").set_source(e))?;
 
         Ok((RpRead::new(meta), data.into()))
+    }
+}
+
+/// [`oio::ReadStream`] returned by [`VfsReader::open`].
+///
+/// Walks `[offset, end)` (or `[offset, EOF)` when `end` is `None`, i.e. an
+/// unbounded range) in [`BUFFER_SIZE`] chunks against the already-open
+/// rustic `file`, issuing one [`Repository::read_file_at`] call per
+/// [`ReadStream::read`]. A short read (fewer bytes back than requested) is
+/// treated as a definitive EOF signal — `end` is pinned to the offset
+/// actually reached, so every subsequent call returns an empty [`Buffer`],
+/// which is exactly what [`ReadStream::read_all`]'s default loop watches for.
+struct VfsReadStream {
+    /// Repository used to fetch each chunk. Cheap to clone (see
+    /// [`VfsReader::repo`]).
+    repo: Arc<IndexedRepo>,
+    /// The already-open rustic file handle, reused across every chunk read
+    /// instead of being re-opened per call.
+    file: Arc<OpenFile>,
+    /// Byte offset of the next chunk to read.
+    offset: usize,
+    /// Exclusive end offset, if the caller's range was bounded. `None` means
+    /// "read until EOF", which is only discovered once a short read occurs.
+    end: Option<usize>,
+}
+
+impl oio::ReadStream for VfsReadStream {
+    async fn read(&mut self) -> opendal::Result<Buffer> {
+        if let Some(end) = self.end {
+            if self.offset >= end {
+                return Ok(Buffer::new());
+            }
+        }
+
+        let want = self
+            .end
+            .map(|end| (end - self.offset).min(BUFFER_SIZE))
+            .unwrap_or(BUFFER_SIZE);
+
+        let repo = self.repo.clone();
+        let file = self.file.clone();
+        let offset = self.offset;
+
+        let data = tokio::task::spawn_blocking(move || repo.read_file_at(&file, offset, want))
+            .await
+            .map_err(|e| Error::new(ErrorKind::Unexpected, "join error").set_source(e))?
+            .map_err(|e| Error::new(ErrorKind::Unexpected, "read failed").set_source(e))?;
+
+        self.offset += data.len();
+
+        if data.len() < want {
+            // Fewer bytes than requested: we've hit EOF, whether or not the
+            // caller's range was itself bounded.
+            self.end = Some(self.offset);
+        }
+
+        Ok(data.into())
     }
 }
 
