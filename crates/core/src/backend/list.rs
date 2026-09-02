@@ -278,6 +278,18 @@ impl<'a, R: ReadSource> ListAdapter<'a, R> {
             if name.trim_end_matches('/').is_empty() {
                 continue;
             }
+
+            let child_path = dir.join(&name);
+
+            // Some backends yield an entry representing the queried directory
+            // itself as part of its own listing (a "self-entry"). Without this
+            // guard that produces a fabricated nested path like `abcd/abcd`,
+            // which — if the backend repeats the behavior one level down —
+            // recurses unboundedly until MAX_DEPTH is hit.
+            if child_path == dir {
+                continue;
+            }
+
             if node.meta.extended_attributes.iter().any(|xattr| {
                 self.filter_opts
                     .exclude_if_xattr
@@ -299,7 +311,6 @@ impl<'a, R: ReadSource> ListAdapter<'a, R> {
                 continue;
             }
 
-            let child_path = dir.join(&name);
             out.push(File::new(child_path, node.node_type, node.meta)?);
         }
 
