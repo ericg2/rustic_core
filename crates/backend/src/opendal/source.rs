@@ -323,10 +323,11 @@ impl WriteSource for OpenDALSource {
     }
 
     fn open_replace(&self, path: &Path) -> std::io::Result<Box<dyn WriteHandle>> {
+        let path = Self::fix_path(path, false);
         let handle = self
             .op
             .writer_options(
-                &path.to_string_lossy().to_string(),
+                &path,
                 WriteOptions {
                     append: false,
                     ..Default::default()
