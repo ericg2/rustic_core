@@ -208,12 +208,12 @@ impl ReadSource for OpenDALSource {
         let handle = self.op.reader(&path)?.into_std_read(..)?;
         Ok(Box::new(OpenDALRead(handle)))
     }
-
     fn readdir(
         &self,
         path: &Path,
     ) -> io::Result<Box<dyn Iterator<Item = io::Result<Node>> + Send>> {
         let path = Self::fix_path(path, true);
+
         let lister = self
             .op
             .lister_options(
@@ -223,22 +223,39 @@ impl ReadSource for OpenDALSource {
                     ..Default::default()
                 },
             )?
-            .map(|entry| {
-                let entry = entry?;
+            .filter_map(move |entry| {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(err) => return Some(Err(io::Error::other(err))),
+                };
+
+                let entry_path = entry.path();
+                if Self::fix_path(entry_path, true) == path {
+                    return None;
+                }
+
                 let meta = entry.metadata();
+
                 let node_type = if meta.is_dir() {
                     NodeType::Dir
                 } else {
                     NodeType::File
                 };
 
-                Ok(Node::new(
-                    entry.name().to_string(),
+                let name = entry_path
+                    .trim_end_matches('/')
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+
+                Some(Ok(Node::new(
+                    name,
                     node_type,
                     Self::resolve_meta(meta),
                     None,
                     None,
-                ))
+                )))
             });
 
         Ok(Box::new(lister))

@@ -9,6 +9,7 @@
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -16,6 +17,7 @@ mod test {
 
     use crate::local::LocalSource;
     use rustic_core::{Excludes, FilterOptions, ListAdapter, ListOptions, ReadSource, WriteSource};
+    use crate::opendal::{OpenDALConfig, OpenDALSource};
 
     /// Constructs a backend rooted at `fs_root` (an absolute filesystem
     /// path). Implement this for any other `ReadSource + WriteSource` to
@@ -31,9 +33,19 @@ mod test {
         }
     }
 
+    impl TestBackend for OpenDALSource {
+        fn open(fs_root: &Path) -> Self {
+            let mut opts = HashMap::new();
+            opts.insert("root".to_string(), fs_root.to_str().unwrap().to_string());
+
+            let cfg = OpenDALConfig::default().options(opts).scheme("fs".to_string());
+            OpenDALSource::from_config(&cfg).unwrap()
+        }
+    }
+
     /// Swap this alias to point at a different `TestBackend` impl to run
     /// the suite against another backend.
-    type Backend = LocalSource;
+    type Backend = OpenDALSource;
 
     /// Collects every yielded path (root-relative, leading `/`, as
     /// `ListAdapter` yields them against a backend rooted at `fs_root`),
