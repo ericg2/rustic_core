@@ -245,7 +245,6 @@ pub trait FileLister: Iterator<Item = io::Result<File>> + Sync + Send + 'static 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Setters, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 #[setters(into)]
-#[non_exhaustive]
 pub struct ListOptions {
     /// Optional exclusion rules used to skip matching paths during the listing.
     #[cfg_attr(feature = "clap", clap(flatten, next_help_heading = "Exclude options"))]

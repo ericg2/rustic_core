@@ -11,7 +11,6 @@ use crate::{BlockdevOption, DevIdOption, TimeOption, XattrOption};
 #[derive(serde::Deserialize, serde::Serialize, Default, Clone, Debug, Setters, PartialEq, Eq)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 #[setters(into)]
-#[non_exhaustive]
 /// [`FilterOptions`] allow to filter a source by various criteria.
 pub struct FilterOptions {
     /// Ignore files based on .gitignore files

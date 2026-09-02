@@ -76,6 +76,7 @@ mod choose;
 mod retry;
 mod util;
 mod repo;
+mod tests;
 
 use serde_json::Value;
 use std::collections::HashMap;
