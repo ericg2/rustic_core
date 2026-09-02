@@ -592,7 +592,7 @@ fn restore_contents<S: Open>(
                         "Failed to prepare the file `{path}`. Please check the path and try again.",
                         err,
                     )
-                    .attach_context("path", path.display().to_string())
+                        .attach_context("path", path.display().to_string())
                 })?;
         }
     }
@@ -601,25 +601,10 @@ fn restore_contents<S: Open>(
     // (set to their full size) before the first write_at.
     let sizes = &Mutex::new(file_lengths);
 
-    // Append path: per-file cursor + condvar so concurrent threads always
-    // append in offset order. The open write handle lives here too, so a
-    // single lock covers both — no DashMap needed.
-    let write_state: Vec<(Mutex<AppendState>, Condvar)> = (0..num_files)
-        .map(|_| {
-            (
-                Mutex::new(AppendState {
-                    cursor: 0,
-                    handle: None,
-                }),
-                Condvar::new(),
-            )
-        })
-        .collect();
+    let can_random_write = dest.can_random_write();
 
-    let write_state = &write_state;
     let p = repo.progress_bytes("restoring file contents...");
     p.set_length(restore_size);
-
     let p = &p;
 
     // Borrow the token so rayon scoped closures can reference it without
@@ -659,140 +644,205 @@ fn restore_contents<S: Open>(
                 "Failed to create the thread pool with `{num_threads}` threads. Please try again.",
                 err,
             )
-            .attach_context("num_threads", threads.to_string())
+                .attach_context("num_threads", threads.to_string())
         })?;
 
-    pool.in_place_scope(|s| {
-        for PackInfo {
-            pack_id,
-            from_file,
-            locations:
+    // Append-only destinations require writes to land in strictly
+    // increasing offset order per file. Previously that ordering was
+    // enforced by blocking the *rayon worker itself* on a condvar until
+    // an earlier chunk showed up — but that earlier chunk's write task
+    // could itself be queued behind the block, in the same fixed-size
+    // pool, with no free worker left to run it. Past a certain amount of
+    // reordering, every worker ends up parked and the whole restore
+    // wedges.
+    //
+    // Fix: writes for append destinations happen on real OS threads
+    // (spawned via `std::thread::scope`), one per file that needs
+    // ordered appending, entirely outside the rayon pool. Rayon workers
+    // just decode a blob and `send` it down a channel — never blocking
+    // on other rayon tasks, so there's nothing left to deadlock. Each
+    // writer thread owns the file's write handle and a small
+    // out-of-order buffer, and flushes whatever's contiguous as it
+    // arrives, then closes the handle once its channel disconnects.
+    //
+    // Random-write destinations are completely unaffected: they keep
+    // writing inline via `write_at`, exactly as before.
+    std::thread::scope(|writer_scope| -> RusticResult<()> {
+        let writers: Mutex<HashMap<usize, std::sync::mpsc::Sender<(u64, Bytes)>>> =
+            Mutex::new(HashMap::new());
+        let writers = &writers;
+
+        pool.in_place_scope(|s| {
+            for PackInfo {
+                pack_id,
+                from_file,
+                locations:
                 BlobLocations {
                     offset,
                     length,
                     blobs,
                 },
-        } in packs
-        {
-            if blobs.is_empty() {
-                continue;
-            }
-            // Stop dispatching new pack reads once cancelled. Already-queued
-            // rayon tasks will still run (rayon doesn't support cancellation),
-            // but they each check the token themselves and exit immediately.
-            if token.is_cancelled() {
-                break;
-            }
-            s.spawn(move |s1| {
-                if token.is_cancelled() {
-                    return;
+            } in packs
+            {
+                if blobs.is_empty() {
+                    continue;
                 }
-
-                let read_data = match (dest.can_random_write(), &from_file) {
-                    (true, Some((file_idx, offset_file, length_file))) => {
-                        let length: u64 = (*length_file).into();
-                        let offset: u64 = *offset_file;
-                        let path = &filenames[*file_idx];
-                        let mut buf = vec![0; length as usize];
-                        let mut file = dest.open_read(path).unwrap();
-                        let _ = file.seek(SeekFrom::Start(offset)).unwrap();
-                        file.read_exact(&mut buf).unwrap();
-                        Bytes::from(buf)
-                    }
-                    _ => be
-                        .read_partial(FileType::Pack, &pack_id, false, offset, length)
-                        .unwrap(),
-                };
-
-                for (bl, name_dests) in blobs {
+                // Stop dispatching new pack reads once cancelled. Already-queued
+                // rayon tasks will still run (rayon doesn't support cancellation),
+                // but they each check the token themselves and exit immediately.
+                if token.is_cancelled() {
+                    break;
+                }
+                s.spawn(move |s1| {
                     if token.is_cancelled() {
                         return;
                     }
 
-                    let size: u64 = bl.data_length().into();
-                    let data = if dest.can_random_write() && from_file.is_some() {
-                        read_data.clone()
-                    } else {
-                        let start = usize::try_from(bl.offset - offset)
-                            .expect("bl.offset - offset overflows usize");
-                        let end = usize::try_from(bl.offset + bl.length - offset)
-                            .expect("bl.offset + bl.length - offset overflows usize");
-                        be.read_encrypted_from_partial(
-                            &read_data[start..end],
-                            bl.uncompressed_length,
-                        )
-                        .unwrap()
+                    let read_data = match (can_random_write, &from_file) {
+                        (true, Some((file_idx, offset_file, length_file))) => {
+                            let length: u64 = (*length_file).into();
+                            let offset: u64 = *offset_file;
+                            let path = &filenames[*file_idx];
+                            let mut buf = vec![0; length as usize];
+                            let mut file = dest.open_read(path).unwrap();
+                            let _ = file.seek(SeekFrom::Start(offset)).unwrap();
+                            file.read_exact(&mut buf).unwrap();
+                            Bytes::from(buf)
+                        }
+                        _ => be
+                            .read_partial(FileType::Pack, &pack_id, false, offset, length)
+                            .unwrap(),
                     };
 
-                    for (file_idx, start) in name_dests {
+                    for (bl, name_dests) in blobs {
                         if token.is_cancelled() {
                             return;
                         }
 
-                        let data = data.clone();
-                        s1.spawn(move |_| {
+                        let size: u64 = bl.data_length().into();
+                        let data = if can_random_write && from_file.is_some() {
+                            read_data.clone()
+                        } else {
+                            let start = usize::try_from(bl.offset - offset)
+                                .expect("bl.offset - offset overflows usize");
+                            let end = usize::try_from(bl.offset + bl.length - offset)
+                                .expect("bl.offset + bl.length - offset overflows usize");
+                            be.read_encrypted_from_partial(
+                                &read_data[start..end],
+                                bl.uncompressed_length,
+                            )
+                                .unwrap()
+                        };
+
+                        for (file_idx, start) in name_dests {
                             if token.is_cancelled() {
                                 return;
                             }
 
-                            let path = &filenames[file_idx];
-                            if dest.can_random_write() {
-                                // Lazily allocate the file to its full size on the first write.
-                                let mut sizes_guard = sizes.lock().unwrap();
-                                let filesize = sizes_guard[file_idx];
-                                if filesize > 0 {
-                                    if let Some(parent) = path.parent() {
-                                        dest.create_dir_all(parent).unwrap();
-                                    }
-                                    dest.set_length(path, filesize).unwrap();
-                                    sizes_guard[file_idx] = 0;
-                                }
-                                drop(sizes_guard);
-                                dest.write_at(path, start, &data).unwrap();
-                            } else {
-                                // Block until it is our turn to append, so writes
-                                // are contiguous. Data waits on this thread's stack —
-                                // nothing is heap-buffered while blocking.
-                                let (state_mutex, condvar) = &write_state[file_idx];
-                                let mut state = condvar
-                                    .wait_while(state_mutex.lock().unwrap(), |s| s.cursor != start)
-                                    .unwrap();
-                                assert_eq!(
-                                    state.cursor, start,
-                                    "non-contiguous write to {path:?}: expected {}, got {start}",
-                                    state.cursor,
-                                );
-                                let handle = state.handle.get_or_insert_with(|| {
-                                    debug!("Opening write handle to {:?}", path);
-                                    dest.open_replace(path).unwrap()
-                                });
-                                handle.write_all(&data).unwrap();
-                                handle.flush().unwrap();
-                                state.cursor += data.len() as u64;
-                                condvar.notify_all();
-                            }
-                            p.inc(size);
-                        });
-                    }
-                }
-            });
-        }
-    });
+                            let data = data.clone();
 
-    // Finally, close all handles to ensure files are written.
-    for (state_mutex, _) in write_state {
-        let mut state = state_mutex.lock().unwrap();
-        if let Some(mut handle) = state.handle.take() {
-            if handle.close().is_err() {
-                warn!("Failed to close file handle for path.");
+                            if can_random_write {
+                                // Unchanged fast path: no ordering dependency between
+                                // files or chunks, so just write inline on the rayon
+                                // worker. Kept as its own spawn so large packs still
+                                // fan out across workers exactly as before.
+                                s1.spawn(move |_| {
+                                    if token.is_cancelled() {
+                                        return;
+                                    }
+
+                                    let path = &filenames[file_idx];
+                                    // Lazily allocate the file to its full size on the first write.
+                                    let mut sizes_guard = sizes.lock().unwrap();
+                                    let filesize = sizes_guard[file_idx];
+                                    if filesize > 0 {
+                                        if let Some(parent) = path.parent() {
+                                            dest.create_dir_all(parent).unwrap();
+                                        }
+                                        dest.set_length(path, filesize).unwrap();
+                                        sizes_guard[file_idx] = 0;
+                                    }
+                                    drop(sizes_guard);
+                                    dest.write_at(path, start, &data).unwrap();
+                                    p.inc(size);
+                                });
+                            } else {
+                                // Append path: hand the chunk off to (or spawn) this
+                                // file's dedicated writer thread and move on
+                                // immediately. No blocking here, so this rayon
+                                // worker is free to keep decoding other blobs.
+                                let tx = {
+                                    let mut guard = writers.lock().unwrap();
+                                    guard
+                                        .entry(file_idx)
+                                        .or_insert_with(|| {
+                                            let (tx, rx) =
+                                                std::sync::mpsc::channel::<(u64, Bytes)>();
+                                            let path = &filenames[file_idx];
+                                            writer_scope.spawn(move || {
+                                                let mut cursor: u64 = 0;
+                                                let mut pending: BTreeMap<u64, Bytes> =
+                                                    BTreeMap::new();
+                                                let mut handle: Option<Box<dyn WriteHandle>> =
+                                                    None;
+
+                                                while let Ok((start, chunk)) = rx.recv() {
+                                                    pending.insert(start, chunk);
+                                                    // Flush every chunk that's now contiguous
+                                                    // with what we've already written. Chunks
+                                                    // may arrive out of order (different rayon
+                                                    // workers, different packs), so we only
+                                                    // write what's actually next.
+                                                    while let Some(chunk) = pending.remove(&cursor)
+                                                    {
+                                                        let h = handle.get_or_insert_with(|| {
+                                                            debug!(
+                                                                "Opening write handle to {:?}",
+                                                                path
+                                                            );
+                                                            dest.open_replace(path).unwrap()
+                                                        });
+                                                        let len = chunk.len() as u64;
+                                                        h.write_all(&chunk).unwrap();
+                                                        cursor += len;
+                                                        p.inc(len);
+                                                    }
+                                                }
+
+                                                if let Some(mut h) = handle {
+                                                    h.flush().unwrap();
+                                                    if h.close().is_err() {
+                                                        warn!(
+                                                            "Failed to close file handle for {:?}.",
+                                                            path
+                                                        );
+                                                    }
+                                                }
+                                            });
+                                            tx
+                                        })
+                                        .clone()
+                                };
+                                // If the writer thread already exited (e.g. it hit an
+                                // internal error and panicked/returned), just drop the
+                                // chunk rather than panicking this rayon worker.
+                                let _ = tx.send((start, data));
+                            }
+                        }
+                    }
+                });
             }
-        }
-    }
+        });
+
+        // `writers` drops here, closing every channel and letting each
+        // writer thread finish flushing + close its handle; `thread::scope`
+        // then joins all of them before returning.
+        Ok(())
+    })?;
 
     p.finish();
     Ok(())
 }
-
 /// Information about what will be restored.
 ///
 /// Struct that contains information of file contents grouped by
