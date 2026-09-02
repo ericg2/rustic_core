@@ -8,4 +8,4 @@ pub use config::{OpenDALConfig, Retry, Throttle};
 pub use source::OpenDALSource;
 pub use vfs::{RusticVfsBuilder, RusticVfsConfig};
 
-pub use opendal;
+//pub use opendal;

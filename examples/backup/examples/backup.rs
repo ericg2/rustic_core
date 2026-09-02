@@ -1,18 +1,23 @@
 //! `backup` example
+
+use std::collections::HashMap;
 use rustic_backend::local::{LocalConfig, LocalSource};
 use rustic_backend::{BackendBuilder, BackendOptions};
 use rustic_core::{BackupOptions, CancelToken, ConfigOptions, Credentials, KeyOptions, PathList, RepoFileInfo, Repository, RepositoryBackends, RepositoryOptions, SnapshotOptions};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
-use rustic_backend::opendal::OpenDALSource;
+use rustic_backend::opendal::{OpenDALConfig, OpenDALSource};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Display info logs
     let _ = SimpleLogger::init(LevelFilter::Info, Config::default());
 
     // Initialize Backends
+    let mut opts = HashMap::new();
+    opts.insert("root".to_string(), "C:\\Users\\Eric\\Documents\\test-repo\\".to_string());
+    let c = OpenDALConfig::default().scheme("fs".to_string()).options(opts);
     let backends = BackendOptions::default()
-        .with_repo(&LocalConfig::new("C:\\Users\\Eric\\test-repo\\"))
+        .with_repo(&c)
         .to_backends()?;
     
     // Open repository
