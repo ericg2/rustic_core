@@ -311,7 +311,8 @@ impl<'a, R: ReadSource> ListAdapter<'a, R> {
             // below, `File::path()`, `visited_dirs`, gitignore ancestor
             // chains — sees a `/`-separated path regardless of platform
             // or of what separator `dir` itself happened to carry.
-            let child_path = to_forward_slash(&dir.join(&name));
+            let p = crate::join_force(&dir, &name);
+            let child_path = to_forward_slash(&p);
 
             // Some backends yield an entry representing the queried directory
             // itself as part of its own listing (a "self-entry"). Without this

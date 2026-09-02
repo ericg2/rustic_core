@@ -384,4 +384,79 @@ mod test {
             .expect("constructing over a missing root should fail");
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     }
+
+    // ── Root prefixing (non-"/" root) ────────────────────────────────────────
+
+    #[test]
+    fn walking_a_root_below_filesystem_root_prefixes_every_yielded_path() {
+        // All existing tests walk from "/", which never exercises whether the
+        // adapter actually prepends the root it was given — every path would
+        // "coincidentally" look correct even if the prefix were silently
+        // dropped. This walks from a nested root instead, so a dropped-prefix
+        // regression (e.g. an absolute-looking name winning a `PathBuf::join`)
+        // would show up as bare "/xyz.exe" instead of "/restore/xyz.exe".
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+
+        touch(fs_root, "/restore/xyz.exe", b"payload");
+        touch(fs_root, "/restore/sub/deeper.txt", b"nested");
+        // A sibling outside the walked root — must never appear in results,
+        // and definitely must never appear stripped-down as "/other.txt"
+        // colliding with something the walk itself would produce.
+        touch(fs_root, "/other.txt", b"should not appear");
+
+        let be = Backend::open(fs_root);
+        let got = sorted(walk(&be, "/restore", ListOptions::default()));
+
+        let expected = sorted(paths(&[
+            "/restore/xyz.exe",
+            "/restore/sub",
+            "/restore/sub/deeper.txt",
+        ]));
+
+        assert_eq!(got, expected);
+
+        // Every single yielded path must be rooted under "/restore" — none of
+        // them should have come back relative to "/" instead.
+        for p in &got {
+            assert!(
+                p.starts_with("/restore"),
+                "path `{}` was not prefixed with the walk root `/restore` — \
+             the root prefix was dropped",
+                p.display()
+            );
+        }
+
+        // The specific failure mode reported: reading back a bare, unprefixed
+        // name must not spuriously "exist" just because a same-named file
+        // happens to live outside the walked root.
+        assert!(!got.contains(&PathBuf::from("/xyz.exe")));
+    }
+
+    #[test]
+    fn walking_a_deeply_nested_root_keeps_full_prefix_at_every_depth() {
+        // Same idea, but nested several levels deep, and recursing further,
+        // to make sure the prefix survives being carried forward through
+        // `PendingDir` across multiple `next()` iterations, not just on the
+        // first listing.
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+
+        touch(fs_root, "/a/b/c/file1.txt", b"1");
+        touch(fs_root, "/a/b/c/d/file2.txt", b"2");
+
+        let be = Backend::open(fs_root);
+        let got = sorted(walk(&be, "/a/b/c", ListOptions::default()));
+
+        let expected = sorted(paths(&[
+            "/a/b/c/file1.txt",
+            "/a/b/c/d",
+            "/a/b/c/d/file2.txt",
+        ]));
+
+        assert_eq!(got, expected);
+        for p in &got {
+            assert!(p.starts_with("/a/b/c"), "lost prefix at: {}", p.display());
+        }
+    }
 }
