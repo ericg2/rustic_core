@@ -129,9 +129,10 @@ pub(crate) fn restore_repository<S: IndexedTree>(
     repo.warm_up_wait(file_infos.to_packs().into_iter())?;
 
     token.check()?;
-    dest.create_dir_all(Path::new(&file_infos.root)).map_err(|err| {
-        RusticError::with_source(ErrorKind::Backend, "Failed to initialize restore.", err)
-    })?; // *** create the root directory here.
+    dest.create_dir_all(Path::new(&file_infos.root))
+        .map_err(|err| {
+            RusticError::with_source(ErrorKind::Backend, "Failed to initialize restore.", err)
+        })?; // *** create the root directory here.
     restore_contents(
         repo,
         dest,
@@ -559,7 +560,6 @@ struct AppendState {
     cursor: u64,
     handle: Option<Box<dyn WriteHandle>>,
 }
-
 #[allow(clippy::too_many_lines)]
 fn restore_contents<S: Open>(
     repo: &Repository<S>,
@@ -592,7 +592,7 @@ fn restore_contents<S: Open>(
                         "Failed to prepare the file `{path}`. Please check the path and try again.",
                         err,
                     )
-                        .attach_context("path", path.display().to_string())
+                    .attach_context("path", path.display().to_string())
                 })?;
         }
     }
@@ -602,6 +602,15 @@ fn restore_contents<S: Open>(
     let sizes = &Mutex::new(file_lengths);
 
     let can_random_write = dest.can_random_write();
+
+    // Cap on unwritten, buffered bytes per file for the append path. A
+    // bounded channel gives real backpressure: if a file's writer thread
+    // falls behind, the rayon worker trying to send it a chunk blocks —
+    // but it blocks on an independent OS thread that is never itself
+    // waiting on rayon, so this can't recreate the pool self-deadlock.
+    // Keeps peak buffered memory roughly bounded instead of growing with
+    // however much reordering happens to occur.
+    const APPEND_CHANNEL_CAPACITY: usize = 16;
 
     let p = repo.progress_bytes("restoring file contents...");
     p.set_length(restore_size);
@@ -644,7 +653,7 @@ fn restore_contents<S: Open>(
                 "Failed to create the thread pool with `{num_threads}` threads. Please try again.",
                 err,
             )
-                .attach_context("num_threads", threads.to_string())
+            .attach_context("num_threads", threads.to_string())
         })?;
 
     // Append-only destinations require writes to land in strictly
@@ -654,21 +663,19 @@ fn restore_contents<S: Open>(
     // could itself be queued behind the block, in the same fixed-size
     // pool, with no free worker left to run it. Past a certain amount of
     // reordering, every worker ends up parked and the whole restore
-    // wedges.
+    // wedges. This is the ONLY thing being changed: rayon's pool, its
+    // size, and the random-write path below are untouched.
     //
     // Fix: writes for append destinations happen on real OS threads
     // (spawned via `std::thread::scope`), one per file that needs
     // ordered appending, entirely outside the rayon pool. Rayon workers
-    // just decode a blob and `send` it down a channel — never blocking
-    // on other rayon tasks, so there's nothing left to deadlock. Each
-    // writer thread owns the file's write handle and a small
-    // out-of-order buffer, and flushes whatever's contiguous as it
-    // arrives, then closes the handle once its channel disconnects.
-    //
-    // Random-write destinations are completely unaffected: they keep
-    // writing inline via `write_at`, exactly as before.
+    // just decode a blob and `send` it down a bounded channel — never
+    // blocking on other rayon tasks, so there's nothing left to
+    // deadlock. Each writer thread owns the file's write handle and a
+    // small out-of-order buffer, flushing whatever's contiguous as it
+    // arrives, and closes the handle once its channel disconnects.
     std::thread::scope(|writer_scope| -> RusticResult<()> {
-        let writers: Mutex<HashMap<usize, std::sync::mpsc::Sender<(u64, Bytes)>>> =
+        let writers: Mutex<HashMap<usize, std::sync::mpsc::SyncSender<(u64, Bytes)>>> =
             Mutex::new(HashMap::new());
         let writers = &writers;
 
@@ -677,11 +684,11 @@ fn restore_contents<S: Open>(
                 pack_id,
                 from_file,
                 locations:
-                BlobLocations {
-                    offset,
-                    length,
-                    blobs,
-                },
+                    BlobLocations {
+                        offset,
+                        length,
+                        blobs,
+                    },
             } in packs
             {
                 if blobs.is_empty() {
@@ -731,7 +738,7 @@ fn restore_contents<S: Open>(
                                 &read_data[start..end],
                                 bl.uncompressed_length,
                             )
-                                .unwrap()
+                            .unwrap()
                         };
 
                         for (file_idx, start) in name_dests {
@@ -742,10 +749,8 @@ fn restore_contents<S: Open>(
                             let data = data.clone();
 
                             if can_random_write {
-                                // Unchanged fast path: no ordering dependency between
-                                // files or chunks, so just write inline on the rayon
-                                // worker. Kept as its own spawn so large packs still
-                                // fan out across workers exactly as before.
+                                // Unchanged: identical to the original code path,
+                                // same mutex, same write_at, same per-chunk spawn.
                                 s1.spawn(move |_| {
                                     if token.is_cancelled() {
                                         return;
@@ -768,23 +773,26 @@ fn restore_contents<S: Open>(
                                 });
                             } else {
                                 // Append path: hand the chunk off to (or spawn) this
-                                // file's dedicated writer thread and move on
-                                // immediately. No blocking here, so this rayon
-                                // worker is free to keep decoding other blobs.
+                                // file's dedicated writer thread. `send` on a
+                                // SyncSender blocks once the channel is full — that's
+                                // fine here since it blocks this rayon worker only on
+                                // an independent OS thread that always keeps draining,
+                                // never on another rayon task.
                                 let tx = {
                                     let mut guard = writers.lock().unwrap();
                                     guard
                                         .entry(file_idx)
                                         .or_insert_with(|| {
                                             let (tx, rx) =
-                                                std::sync::mpsc::channel::<(u64, Bytes)>();
+                                                std::sync::mpsc::sync_channel::<(u64, Bytes)>(
+                                                    APPEND_CHANNEL_CAPACITY,
+                                                );
                                             let path = &filenames[file_idx];
                                             writer_scope.spawn(move || {
                                                 let mut cursor: u64 = 0;
                                                 let mut pending: BTreeMap<u64, Bytes> =
                                                     BTreeMap::new();
-                                                let mut handle: Option<Box<dyn WriteHandle>> =
-                                                    None;
+                                                let mut handle: Option<Box<dyn WriteHandle>> = None;
 
                                                 while let Ok((start, chunk)) = rx.recv() {
                                                     pending.insert(start, chunk);
@@ -824,8 +832,8 @@ fn restore_contents<S: Open>(
                                         .clone()
                                 };
                                 // If the writer thread already exited (e.g. it hit an
-                                // internal error and panicked/returned), just drop the
-                                // chunk rather than panicking this rayon worker.
+                                // internal error), drop the chunk rather than panicking
+                                // this rayon worker.
                                 let _ = tx.send((start, data));
                             }
                         }
@@ -834,8 +842,8 @@ fn restore_contents<S: Open>(
             }
         });
 
-        // `writers` drops here, closing every channel and letting each
-        // writer thread finish flushing + close its handle; `thread::scope`
+        // `writers` drops here, closing every channel so each writer
+        // thread finishes flushing + closes its handle; `thread::scope`
         // then joins all of them before returning.
         Ok(())
     })?;
@@ -843,6 +851,7 @@ fn restore_contents<S: Open>(
     p.finish();
     Ok(())
 }
+
 /// Information about what will be restored.
 ///
 /// Struct that contains information of file contents grouped by
