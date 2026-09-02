@@ -376,8 +376,9 @@ where
                 next_dst = process_existing(&mut src, destination)?;
             }
             (Some(destination), Some((path, node))) => {
+                let path = crate::join_force(dest_path, path);
                 let path_a = clean_path(&destination.path);
-                let path_b = clean_path(path);
+                let path_b = clean_path(&path);
                 trace!("comparing {:?} with {:?}", &path_a, &path_b);
                 match path_a.cmp(&path_b) {
                     Ordering::Less => {
@@ -394,17 +395,18 @@ where
                         } else {
                             next_dst = next_entry(&mut src);
                         }
-                        process_node(path, node, true)?;
+                        process_node(&path, node, true)?;
                         next_node = node_streamer.next().transpose()?;
                     }
                     Ordering::Greater => {
-                        process_node(path, node, false)?;
+                        process_node(&path, node, false)?;
                         next_node = node_streamer.next().transpose()?;
                     }
                 }
             }
             (None, Some((path, node))) => {
-                process_node(path, node, false)?;
+                let path = crate::join_force(dest_path, path);
+                process_node(&path, node, false)?;
                 next_node = node_streamer.next().transpose()?;
             }
         }
