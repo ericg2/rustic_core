@@ -14,6 +14,26 @@ use crate::{
 /// input and aborted with an error, rather than running forever.
 const MAX_DEPTH: usize = 10_000;
 
+/// Normalizes a path to use `/` as its separator, regardless of platform.
+///
+/// Applied unconditionally (not just under `cfg(windows)`) to every path
+/// that enters or is constructed by this module — caller-supplied roots,
+/// and every `child_path` built during a directory listing — so output
+/// paths are always `/`-separated no matter what platform this crate is
+/// built for, and no matter what separator style a caller-supplied root
+/// happened to use. This keeps `child_path == dir` comparisons,
+/// `visited_dirs` membership, and gitignore matching all operating on a
+/// single consistent representation instead of needing separator-aware
+/// logic scattered around.
+fn to_forward_slash(path: &Path) -> PathBuf {
+    let s = path.to_string_lossy();
+    if s.contains('\\') {
+        PathBuf::from(s.replace('\\', "/"))
+    } else {
+        path.to_path_buf()
+    }
+}
+
 /// A directory queued for expansion, plus the gitignore ancestor chain
 /// needed to filter its children.
 #[derive(Clone, Debug)]
@@ -45,6 +65,10 @@ struct PendingDir {
 /// `one_file_system` is set) its own device id, but all roots share a
 /// single symlink-cycle guard so a directory reachable from two roots is
 /// only descended into once.
+///
+/// All paths — both caller-supplied roots and every path yielded by
+/// iteration — are normalized to use `/` as a separator; see
+/// [`to_forward_slash`].
 pub struct ListAdapter<'a, R: ReadSource> {
     be: &'a R,
     roots: Vec<PathBuf>,
@@ -143,6 +167,9 @@ impl<'a, R: ReadSource> ListAdapter<'a, R> {
     /// all roots, so a directory reachable from more than one root is
     /// only yielded once, from whichever root reaches it first.
     ///
+    /// Roots are normalized to use `/` separators before being stored or
+    /// used, regardless of what separator style they're passed in with.
+    ///
     /// # Arguments
     ///
     /// * `be` - The backend to read directory entries and metadata from.
@@ -165,7 +192,7 @@ impl<'a, R: ReadSource> ListAdapter<'a, R> {
     {
         let roots: Vec<PathBuf> = roots
             .into_iter()
-            .map(|p| p.as_ref().to_path_buf())
+            .map(|p| to_forward_slash(p.as_ref()))
             .collect();
 
         let filter_opts = opts.filters.unwrap_or_default();
@@ -279,7 +306,12 @@ impl<'a, R: ReadSource> ListAdapter<'a, R> {
                 continue;
             }
 
-            let child_path = dir.join(&name);
+            // Normalized immediately after construction so every
+            // downstream use of this path — the self-entry comparison
+            // below, `File::path()`, `visited_dirs`, gitignore ancestor
+            // chains — sees a `/`-separated path regardless of platform
+            // or of what separator `dir` itself happened to carry.
+            let child_path = to_forward_slash(&dir.join(&name));
 
             // Some backends yield an entry representing the queried directory
             // itself as part of its own listing (a "self-entry"). Without this
@@ -399,5 +431,3 @@ impl<'a, R: ReadSource> Iterator for ListAdapter<'a, R> {
         }
     }
 }
-
-
