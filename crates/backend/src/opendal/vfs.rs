@@ -628,15 +628,17 @@ fn meta_from_node(n: &Node) -> Metadata {
 
     let mut meta = Metadata::new(mode).with_content_length(n.meta.size);
 
-    if let Some(mtime) = n.meta.mtime {
-        match Timestamp::try_from(SystemTime::from(mtime)) {
-            Ok(ts) => meta = meta.with_last_modified(ts),
-            Err(e) => warn!("Failed to convert mtime to OpenDAL Timestamp: {e}"),
-        }
-    }
+    let timestamp = n
+        .meta
+        .mtime
+        .and_then(|mtime| Timestamp::try_from(SystemTime::from(mtime)).ok())
+        .unwrap_or_else(|| {
+            Timestamp::new(0, 0).expect("Unix epoch is a valid OpenDAL timestamp")
+        });
 
-    meta
+    meta.with_last_modified(timestamp)
 }
+
 
 /// Normalize a path string for VFS lookup.
 ///
