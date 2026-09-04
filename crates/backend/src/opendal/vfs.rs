@@ -244,11 +244,11 @@ const DEFAULT_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 ///
 /// Tokens like `{hostname}` and `{label}` are expanded by rustic at VFS
 /// build time; `{time}` is formatted with [`DEFAULT_TIME`].
-const DEFAULT_PATH: &str = "[{hostname}]/[{label}]/{time}";
+const DEFAULT_PATH: &str = "[{hostname}]/[{label}]/[{time}]";
 
 /// [`strftime`](https://docs.rs/chrono/latest/chrono/format/strftime)-style
 /// format string used to render the `{time}` token in [`DEFAULT_PATH`].
-const DEFAULT_TIME: &str = "%Y-%m-%d_%H-%M-%S";
+const DEFAULT_TIME: &str = "%Y-%m-%d-%H-%M-%S";
 
 /// A standard "this backend is read-only" error, reused by every mutating
 /// operation (`create_dir`, `write`, `delete`, `copy`, `rename`, `presign`).
