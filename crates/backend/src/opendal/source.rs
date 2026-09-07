@@ -6,16 +6,18 @@ use opendal::options::{DeleteOptions, ListOptions, WriteOptions};
 use rayon::prelude::{IntoParallelIterator, ParallelIterator};
 use std::io::{self, Read, Seek, Write};
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
 use typed_path::UnixPathBuf;
 
+use crate::BackendBuilder;
 use crate::opendal::config::{OpenDALConfig, Retry, Throttle};
 use crate::opendal::log::OpenLogLayer;
+use crate::repo::RepoAdapter;
 use rustic_core::{
     ErrorKind, FileLister, FileType, Id, Metadata, Node, NodeType, ReadBackend, ReadHandle,
-    ReadSource, ReadSourceConfig, RusticError, RusticResult, WriteBackend, WriteHandle,
-    WriteSource,
+    ReadSource, ReadSourceConfig, RepositoryBackends, RusticError, RusticResult, WriteBackend,
+    WriteHandle, WriteSource,
 };
 
 mod constants {
@@ -154,6 +156,13 @@ impl OpenDALSource {
             _ => UnixPathBuf::from(tpe.dirname()).join(&hex_id[..]),
         }
         .to_string()
+    }
+}
+
+impl BackendBuilder for OpenDALSource {
+    fn to_backends(&self) -> RusticResult<RepositoryBackends> {
+        let x = RepoAdapter::new(self.clone());
+        Ok(RepositoryBackends::new(Arc::new(x), None))
     }
 }
 
