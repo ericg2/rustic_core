@@ -1,7 +1,8 @@
 //! `config` subcommand
 use bytesize::ByteSize;
 use derive_setters::Setters;
-
+use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
 use crate::{
     backend::decrypt::{DecryptBackend, DecryptWriteBackend},
     chunker::rabin::check_rabin_params,
@@ -116,8 +117,9 @@ pub(crate) fn save_config_hot<S>(
     Ok(())
 }
 
+#[serde_as]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
-#[derive(Debug, Clone, Copy, Default, Setters)]
+#[derive(Debug, Clone, Copy, Default, Setters, Serialize, Deserialize)]
 #[setters(into)]
 #[non_exhaustive]
 /// Options for the `config` command, used to set repository-wide options
@@ -134,16 +136,19 @@ pub struct ConfigOptions {
     /// Set the chunk size. For the rabin chunker this is the average chunk size.
     /// Defaults to `1 MiB` if not set.
     #[cfg_attr(feature = "clap", clap(long, value_name = "SIZE"))]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub set_chunk_size: Option<ByteSize>,
 
     /// Set the minimum chunk size. Only used for the rabin chunker.
     /// Defaults to `512 kiB` if not set.
     #[cfg_attr(feature = "clap", clap(long, value_name = "SIZE"))]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub set_chunk_min_size: Option<ByteSize>,
 
     /// Set the maximum chunk size. Only used for the rabin chunker.
     /// Defaults to `8 MiB` if not set.
     #[cfg_attr(feature = "clap", clap(long, value_name = "SIZE"))]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub set_chunk_max_size: Option<ByteSize>,
 
     /// Set compression level. Allowed levels are 1 to 22 and -1 to -7, see <https://facebook.github.io/zstd/>.
@@ -160,12 +165,14 @@ pub struct ConfigOptions {
     /// Note that for large repos, this value is grown by the grown factor.
     /// Defaults to `4 MiB` if not set.
     #[cfg_attr(feature = "clap", clap(long, value_name = "SIZE"))]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub set_treepack_size: Option<ByteSize>,
 
     /// Set upper limit for default packsize for tree packs.
     /// Note that packs actually can get a bit larger.
     /// If not set, pack sizes can grow up to approximately `4 GiB`.
     #[cfg_attr(feature = "clap", clap(long, value_name = "SIZE"))]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub set_treepack_size_limit: Option<ByteSize>,
 
     /// Set grow factor for tree packs. The default packsize grows by the square root of the total size of all
@@ -179,6 +186,7 @@ pub struct ConfigOptions {
     /// Note that for large repos, this value is grown by the grown factor.
     /// Defaults to `32 MiB` if not set.
     #[cfg_attr(feature = "clap", clap(long, value_name = "SIZE"))]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub set_datapack_size: Option<ByteSize>,
 
     /// Set grow factor for data packs. The default packsize grows by the square root of the total size of all
@@ -192,6 +200,7 @@ pub struct ConfigOptions {
     /// Note that packs actually can get a bit larger.
     /// If not set, pack sizes can grow up to approximately `4 GiB`.
     #[cfg_attr(feature = "clap", clap(long, value_name = "SIZE"))]
+    #[serde_as(as = "Option<DisplayFromStr>")]
     pub set_datapack_size_limit: Option<ByteSize>,
 
     /// Set minimum tolerated packsize in percent of the targeted packsize.
