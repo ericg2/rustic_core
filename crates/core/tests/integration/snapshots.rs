@@ -40,15 +40,13 @@ fn repo_and_snapshots() -> (Repository<IndexedIdsStatus>, Vec<SnapshotFile>) {
     let src = LocalSource::new(source.path());
     for snap_ts in snapshot_timestamp {
         let snapshot_file = repo
-            .backup(
-                &backup_options,
-                &src,
-                SnapshotFile {
-                    time: snap_ts,
-                    ..Default::default()
-                },
-                CancelToken::new(),
-            )
+            .backup(SnapshotFile {
+                time: snap_ts,
+                ..Default::default()
+            })
+            .options(backup_options.clone())
+            .add_source(&src)
+            .run()
             .unwrap();
         snapshot_files.push(snapshot_file);
     }

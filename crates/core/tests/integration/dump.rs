@@ -42,7 +42,11 @@ fn backup_single_file(
     
     let src = LocalSource::new(&file_path);
     let opts = BackupOptions::default().as_path(PathBuf::from_str(name)?);
-    let _snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let _snapshot =  repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     Ok((repo.to_indexed()?, format!("latest:{name}")))
 }

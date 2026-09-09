@@ -39,21 +39,33 @@ fn test_prune(
     // first backup
     let paths = source.0.path().join("0/0/9");
     let src = LocalSource::new(&paths);
-    let snapshot1 = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let snapshot1 =  repo
+        .backup(SnapshotFile::default())
+        .options(opts.clone())
+        .add_source(&src)
+        .run()?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // second backup
     let paths = source.0.path().join("0/0/9/2");
     let src = LocalSource::new(&paths);
-    let _ = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let _ =  repo
+        .backup(SnapshotFile::default())
+        .options(opts.clone())
+        .add_source(&src)
+        .run()?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;
     // third backup
     let paths = source.0.path().join("0/0/9/3");
     let src = LocalSource::new(&paths);
-    let _ = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let _ =  repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     // drop index
     let repo = repo.drop_index();

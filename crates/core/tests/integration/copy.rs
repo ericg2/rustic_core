@@ -21,7 +21,11 @@ fn test_copy(tar_gz_testdata: Result<TestSource>, set_up_repo: Result<RepoOpen>)
 
     // first backup
     let src = LocalSource::new(source.path());
-    let snap = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let snap =  repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     // re-read index
     let repo = repo.to_indexed()?;

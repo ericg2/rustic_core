@@ -23,7 +23,11 @@ fn test_find(tar_gz_testdata: Result<TestSource>, set_up_repo: Result<RepoOpen>)
     let src = LocalSource::new(source.path());
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
     // backup test-data
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let snapshot =  repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     // re-read index
     let repo = repo.to_indexed_ids()?;

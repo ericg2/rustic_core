@@ -34,7 +34,11 @@ fn test_chunker_params(
     // we use as_path to not depend on the actual tempdir
     let src = LocalSource::new(source.path());
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let snapshot =  repo
+        .backup(SnapshotFile::default())
+        .options(opts.clone())
+        .add_source(&src)
+        .run()?;;
 
     // We can also bind to scope ( https://docs.rs/insta/latest/insta/struct.Settings.html#method.bind_to_scope )
     // But I think that can get messy with a lot of tests, also checking which settings are currently applied

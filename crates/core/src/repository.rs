@@ -75,6 +75,7 @@ use crate::{
 
 #[cfg(feature = "clap")]
 use clap::ValueHint;
+use crate::commands::backup::BackupBuilder;
 
 mod constants {
     /// Estimated item capacity used for cache in [`FullIndex`](super::FullIndex)
@@ -1679,60 +1680,12 @@ impl<S: IndexedTree> Repository<S> {
     }
 }
 
-impl<S: IndexedIds> Repository<S> {
-    /// Run a backup of `source` using the given options.
-    ///
-    /// You have to give a pre-filled [`SnapshotFile`] which is modified and saved.
-    ///
-    /// # Arguments
-    ///
-    /// * `opts` - The options to use
-    /// * `source` - The source to backup
-    /// * `snap` - The snapshot to modify and save
-    ///
-    /// # Errors
-    ///
-    // TODO: Document errors
-    ///
-    /// # Returns
-    ///
-    /// The saved snapshot.
-    pub fn backup_with(
-        &self,
-        opts: &BackupOptions,
-        src: &impl ReadSource,
-        snap: SnapshotFile,
-        paths: PathList,
-        token: CancelToken,
-    ) -> RusticResult<SnapshotFile> {
-        commands::backup::backup(self, opts, src, snap, &*paths.paths(), token)
-    }
 
-    /// Run a backup of `source` using the given options.
-    ///
-    /// You have to give a pre-filled [`SnapshotFile`] which is modified and saved.
-    ///
-    /// # Arguments
-    ///
-    /// * `opts` - The options to use
-    /// * `source` - The source to back up
-    /// * `snap` - The snapshot to modify and save
-    ///
-    /// # Errors
-    ///
-    // TODO: Document errors
-    ///
-    /// # Returns
-    ///
-    /// The saved snapshot.
-    pub fn backup(
-        &self,
-        opts: &BackupOptions,
-        src: &impl ReadSource,
-        snap: SnapshotFile,
-        token: CancelToken,
-    ) -> RusticResult<SnapshotFile> {
-        commands::backup::backup(self, opts, src, snap, &["/".into()], token)
+impl<S: IndexedIds> Repository<S> {
+    /// Create a [`BackupBuilder`] for the [`Repository`].
+    #[must_use]
+    pub fn backup(&self, snap: SnapshotFile) -> BackupBuilder<'_, S> {
+        BackupBuilder::new(self, snap)
     }
 }
 

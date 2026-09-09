@@ -20,12 +20,16 @@ fn test_vfs(
 ) -> Result<()> {
     // Fixtures
     let (source, repo) = (tar_gz_testdata?, set_up_repo?.to_indexed_ids()?);
-  
+
     // we use as_path to not depend on the actual tempdir
     let src = LocalSource::new(source.path());
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
     // backup test-data
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let snapshot = repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     // re-read index
     let repo = repo.to_indexed()?;

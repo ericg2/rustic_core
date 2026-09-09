@@ -35,12 +35,11 @@ fn test_rewrite(
 
     // first backup
     let src = LocalSource::new(source.path());
-    let snapshot = repo.backup(
-        &backup_opts,
-        &src,
-        SnapshotFile::default(),
-        CancelToken::new(),
-    )?;
+    let snapshot = repo
+        .backup(SnapshotFile::default())
+        .options(backup_opts.clone())
+        .add_source(&src)
+        .run()?;
 
     let modification = SnapshotModification::default()
         .set_label("label".to_string())
@@ -114,12 +113,11 @@ fn test_rewrite(
     let src = LocalSource::new(source.path());
     backup_opts.source_opts.excludes = Some(excludes.clone());
 
-    let snapshot = repo.backup(
-        &backup_opts,
-        &src,
-        SnapshotFile::default(),
-        CancelToken::new(),
-    )?;
+    let snapshot = repo
+        .backup(SnapshotFile::default())
+        .options(backup_opts)
+        .add_source(&src)
+        .run()?;
     // trees should be identical
     assert_eq!(snapshot.tree, rewrite_snaps[0].tree);
 

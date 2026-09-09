@@ -8,7 +8,10 @@ use log::{error, trace};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use typed_path::UnixPathBuf;
 
-use rustic_core::{BytesList, ErrorKind, FileType, Id, ListAdapter, Metadata, ReadBackend, ReadSource, RusticError, RusticResult, WriteBackend, WriteSource, ALL_FILE_TYPES};
+use rustic_core::{
+    ALL_FILE_TYPES, BytesList, ErrorKind, FileType, Id, ListAdapter, ListBuilder, Metadata,
+    ReadBackend, ReadSource, RusticError, RusticResult, WriteBackend, WriteSource,
+};
 
 // ---------------------------------------------------------------------
 // Shared, backend-agnostic helpers
@@ -51,7 +54,7 @@ impl<S> RepoAdapter<S> {
     }
 }
 
-impl<S: WriteSource> ReadBackend for RepoAdapter<S> {
+impl<S: WriteSource + 'static> ReadBackend for RepoAdapter<S> {
     fn location(&self) -> String {
         self.be.location()
     }
@@ -87,10 +90,13 @@ impl<S: WriteSource> ReadBackend for RepoAdapter<S> {
             };
         }
 
-        let lister = ListAdapter::new(&self.be, tpe.dirname()).map_err(|err| {
-            RusticError::with_source(ErrorKind::Backend, "Listing failed for `{type}`", err)
-                .attach_context("type", tpe.to_string())
-        })?;
+        let lister = ListBuilder::new(&self.be)
+            .with_root(&tpe.dirname())
+            .build()
+            .map_err(|err| {
+                RusticError::with_source(ErrorKind::Backend, "Listing failed for `{type}`", err)
+                    .attach_context("type", tpe.to_string())
+            })?;
 
         Ok(lister
             .filter_map(|r| {
@@ -131,10 +137,13 @@ impl<S: WriteSource> ReadBackend for RepoAdapter<S> {
             );
         }
 
-        let lister = ListAdapter::new(&self.be, tpe.dirname()).map_err(|err| {
-            RusticError::with_source(ErrorKind::Backend, "Listing failed for `{type}`", err)
-                .attach_context("type", tpe.to_string())
-        })?;
+        let lister = ListBuilder::new(&self.be)
+            .with_root(tpe.dirname())
+            .build()
+            .map_err(|err| {
+                RusticError::with_source(ErrorKind::Backend, "Listing failed for `{type}`", err)
+                    .attach_context("type", tpe.to_string())
+            })?;
 
         Ok(lister
             .filter_map(|r| {
@@ -216,7 +225,7 @@ impl<S: WriteSource> ReadBackend for RepoAdapter<S> {
     }
 }
 
-impl<S: WriteSource> WriteBackend for RepoAdapter<S> {
+impl<S: WriteSource + 'static> WriteBackend for RepoAdapter<S> {
     fn create(&self) -> RusticResult<()> {
         trace!("creating repo at {:?}", self.location());
         for tpe in ALL_FILE_TYPES {

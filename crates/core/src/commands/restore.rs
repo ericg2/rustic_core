@@ -5,7 +5,7 @@ use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
 use crate::{
-    CancelToken, File, FileLister, ListAdapter, ReadSource, WriteHandle, WriteSource,
+    CancelToken, File, FileLister, ListAdapter, ListBuilder, ReadSource, WriteHandle, WriteSource,
     backend::{
         FileType, ReadBackend,
         decrypt::DecryptReadBackend,
@@ -355,13 +355,17 @@ where
         Ok(())
     };
 
-    let mut src = ListAdapter::new(dest, dest_path).map_err(|err| {
-        RusticError::with_source(
-            ErrorKind::InputOutput,
-            "Failed to create list adapter for destination.",
-            err,
-        )
-    })?;
+    let mut src = ListBuilder::new(dest)
+        .with_root(dest_path)
+        .build()
+        .map_err(|err| {
+            RusticError::with_source(
+                ErrorKind::InputOutput,
+                "Failed to create list adapter for destination.",
+                err,
+            )
+        })?;
+
     let mut next_dst = next_entry(&mut src);
     let mut next_node = node_streamer.next().transpose()?;
     loop {

@@ -36,7 +36,11 @@ fn hot_cold(tar_gz_testdata: Result<TestSource>) -> Result<()> {
 
     // backup
     let src = LocalSource::new(source.path());
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let snapshot =  repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     // get all snapshots and check them
     let all_snapshots = repo.get_all_snapshots()?;

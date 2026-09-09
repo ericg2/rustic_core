@@ -27,7 +27,11 @@ fn test_append_only(
     // backup should still work
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
     let src = LocalSource::new(source.path());
-    let snap = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let snap = repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     // deleting snapshots should fail
     assert!(repo.delete_snapshots(&[snap.id]).is_err());

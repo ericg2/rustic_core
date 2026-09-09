@@ -4,11 +4,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use derive_setters::Setters;
+
 use crate::backend::filters::GitignoreLayers;
-use crate::{
-    File, FilterOptions, ListOptions, Node, NodeType, ReadSource, WriteSource,
-    backend::filters::ExcludeFilter,
-};
+use crate::{backend::filters::ExcludeFilter, Excludes, File, FilterOptions, ListOptions, Node, NodeType, ReadSource, WriteSource};
 
 /// Walks deeper than this are treated as a symlink loop or pathological
 /// input and aborted with an error, rather than running forever.
@@ -52,161 +51,157 @@ struct PendingDir {
     depth: usize,
 }
 
-/// Lists (optionally recursively) the contents of one or more
-/// [`WriteSource`] paths, applying [`FilterOptions`] and glob/gitignore
-/// excludes.
+/// Builder for [`ListAdapter`].
 ///
-/// Matches the filtering behavior of `ignore::WalkBuilder`, including
-/// `.gitignore`, `.git/info/exclude`, and custom ignore files, but drives
-/// it against an arbitrary [`ReadSource`] backend instead of `std::fs`.
+/// Holds every knob that can be configured before a walk starts —
+/// backend, roots, recursion, filters, and excludes — and validates and
+/// resolves them all in [`ListBuilder::build`]. The resulting
+/// [`ListAdapter`] holds no setters of its own; everything about a walk
+/// is fixed once `build` succeeds.
 ///
-/// When constructed with multiple roots, each root is walked
-/// independently with its own gitignore ancestor chain and (if
-/// `one_file_system` is set) its own device id, but all roots share a
-/// single symlink-cycle guard so a directory reachable from two roots is
-/// only descended into once.
+/// # Examples
 ///
-/// All paths — both caller-supplied roots and every path yielded by
-/// iteration — are normalized to use `/` as a separator; see
-/// [`to_forward_slash`].
-pub struct ListAdapter<'a, R: ReadSource> {
+/// ```ignore
+/// let adapter = ListBuilder::new(&backend)
+///     .root("/some/path")
+///     .recursive(true)
+///     .filters(opts) // FilterOptions, not Option<FilterOptions> (strip_option)
+///     .build()?;
+/// ```
+///
+/// The `recursive`, `filters`, and `excludes` setters below are generated
+/// by `#[derive(Setters)]` (the `derive-setters` crate): each takes the
+/// field's value, consumes and returns `self`, so they chain exactly like
+/// the hand-written setters this type used to have. `filters` and
+/// `excludes` use `strip_option` so callers pass `FilterOptions` /
+/// `Vec<String>` directly rather than wrapping them in `Some(..)`.
+#[derive(Setters)]
+#[setters(prefix = "with_", borrow_self = false)]
+pub struct ListBuilder<'a, R: ReadSource> {
+    /// Backend to read from. Not settable after construction.
+    #[setters(skip)]
     be: &'a R,
+    /// Roots to walk. Use [`ListBuilder::root`] / [`ListBuilder::roots`]
+    /// to append rather than a generated setter, since those need to
+    /// extend the list rather than replace it.
+    #[setters(skip)]
     roots: Vec<PathBuf>,
+    /// Whether directories are descended into recursively. Defaults to
+    /// `true`.
     recursive: bool,
-    filter_opts: FilterOptions,
-    excludes: Option<ExcludeFilter>,
-    gitignore: GitignoreLayers<'a, R>,
-
-    dirs: VecDeque<PendingDir>,
-    current_batch: VecDeque<File>,
-    /// Guards against symlink cycles when the backend reports a
-    /// symlinked directory as a plain directory, and against revisiting
-    /// a directory reachable from more than one root.
-    visited_dirs: HashSet<PathBuf>,
+    /// Filtering options (gitignore, one-file-system, exclude markers,
+    /// xattrs, size limits, etc). Defaults to [`FilterOptions::default`]
+    /// if never set.
+    #[setters(strip_option)]
+    filters: Option<FilterOptions>,
+    /// Glob exclude patterns. Defaults to no glob excludes if never set
+    /// or given an empty list.
+    #[setters(strip_option)]
+    excludes: Option<Excludes>,
 }
 
-impl<'a, R: ReadSource> ListAdapter<'a, R> {
-    /// Returns the backend this lister reads from.
-    ///
-    /// # Returns
-    ///
-    /// A reference to the [`ReadSource`] backend supplied at construction.
-    pub fn rbe(&self) -> &'a R {
-        &self.be
-    }
-
-    /// Creates a lister rooted at a single `root`, using default
-    /// [`ListOptions`].
+impl<'a, R: ReadSource> ListBuilder<'a, R> {
+    /// Starts a new builder with no roots, recursion enabled, and
+    /// default filtering.
     ///
     /// # Arguments
     ///
     /// * `be` - The backend to read directory entries and metadata from.
-    /// * `root` - The single path to walk.
-    ///
-    /// # Errors
-    ///
-    /// * If `root` cannot be stat'd or read from the backend.
     ///
     /// # Returns
     ///
-    /// A [`ListAdapter`] ready to be iterated.
-    pub fn new(be: &'a R, root: impl AsRef<Path>) -> io::Result<Self> {
-        Self::with_options(be, root, ListOptions::default())
+    /// A [`ListBuilder`] ready to be configured and built.
+    pub fn new(be: &'a R) -> Self {
+        Self {
+            be,
+            roots: Vec::new(),
+            recursive: true,
+            filters: None,
+            excludes: None,
+        }
     }
 
-    /// Creates a lister rooted at a single `root` with custom
-    /// [`ListOptions`].
+    /// Adds a single root to walk, in addition to any already set.
     ///
     /// # Arguments
     ///
-    /// * `be` - The backend to read directory entries and metadata from.
-    /// * `root` - The single path to walk.
-    /// * `opts` - Filtering, exclude, and recursion options.
-    ///
-    /// # Errors
-    ///
-    /// * If `root` does not exist or cannot be stat'd (when
-    ///   `one_file_system` is enabled).
-    /// * If `opts.excludes` contains an invalid glob pattern.
+    /// * `root` - The path to walk.
     ///
     /// # Returns
     ///
-    /// A [`ListAdapter`] ready to be iterated.
-    pub fn with_options(be: &'a R, root: impl AsRef<Path>, opts: ListOptions) -> io::Result<Self> {
-        Self::with_options_multi(be, [root], opts)
+    /// `self`, for chaining.
+    pub fn with_root(mut self, root: impl AsRef<Path>) -> Self {
+        self.roots.push(root.as_ref().to_path_buf());
+        self
     }
 
-    /// Creates a lister that walks several roots, using default [`ListOptions`].
+    /// Adds several roots to walk, in addition to any already set.
     ///
     /// # Arguments
     ///
-    /// * `be` - The backend to read directory entries and metadata from.
     /// * `roots` - The paths to walk, in iteration order.
     ///
-    /// # Errors
-    ///
-    /// * If any root cannot be stat'd or read from the backend.
-    ///
     /// # Returns
     ///
-    /// A [`ListAdapter`] ready to be iterated.
-    pub fn new_multi<I, P>(be: &'a R, roots: I) -> io::Result<Self>
+    /// `self`, for chaining.
+    pub fn with_roots<I, P>(mut self, roots: I) -> Self
     where
         I: IntoIterator<Item = P>,
         P: AsRef<Path>,
     {
-        Self::with_options_multi(be, roots, ListOptions::default())
+        self.roots
+            .extend(roots.into_iter().map(|p| p.as_ref().to_path_buf()));
+        self
     }
 
-    /// Creates a lister that walks several roots with custom
-    /// [`ListOptions`].
-    ///
-    /// Roots are walked in the order given. Each root gets its own
-    /// gitignore ancestor chain (so a `.gitignore` above one root has no
-    /// effect on another), but the symlink-cycle guard is shared across
-    /// all roots, so a directory reachable from more than one root is
-    /// only yielded once, from whichever root reaches it first.
-    ///
-    /// Roots are normalized to use `/` separators before being stored or
-    /// used, regardless of what separator style they're passed in with.
+    /// Configures the builder from a legacy [`ListOptions`] value in one
+    /// call.
     ///
     /// # Arguments
     ///
-    /// * `be` - The backend to read directory entries and metadata from.
-    /// * `roots` - The paths to walk, in iteration order.
-    /// * `opts` - Filtering, exclude, and recursion options.
+    /// * `opts` - The options to apply.
+    ///
+    /// # Returns
+    ///
+    /// `self`, for chaining.
+    pub fn with_options(mut self, opts: ListOptions) -> Self {
+        self.recursive = !opts.no_recursive;
+        self.filters = opts.filters;
+        self.excludes = opts.excludes;
+        self
+    }
+
+    /// Validates configuration, resolves roots against the backend, and
+    /// produces an immutable [`ListAdapter`] ready to iterate.
     ///
     /// # Errors
     ///
     /// * If any root does not exist or cannot be stat'd (when
     ///   `one_file_system` is enabled).
-    /// * If `opts.excludes` contains an invalid glob pattern.
+    /// * If the configured excludes contain an invalid glob pattern.
     ///
     /// # Returns
     ///
     /// A [`ListAdapter`] ready to be iterated.
-    pub fn with_options_multi<I, P>(be: &'a R, roots: I, opts: ListOptions) -> io::Result<Self>
-    where
-        I: IntoIterator<Item = P>,
-        P: AsRef<Path>,
-    {
-        let roots: Vec<PathBuf> = roots
-            .into_iter()
-            .map(|p| to_forward_slash(p.as_ref()))
+    pub fn build(self) -> io::Result<ListAdapter<'a, R>> {
+        let roots: Vec<PathBuf> = self
+            .roots
+            .iter()
+            .map(|p| to_forward_slash(p))
             .collect();
 
-        let filter_opts = opts.filters.unwrap_or_default();
-        let excludes = match opts.excludes {
+        let filter_opts = self.filters.unwrap_or_default();
+        let excludes = match self.excludes {
             Some(ref ex) if !ex.is_empty() => Some(ExcludeFilter::new(ex)?),
             _ => None,
         };
 
-        let mut gitignore = GitignoreLayers::new(be, &filter_opts);
+        let mut gitignore = GitignoreLayers::new(self.be, &filter_opts);
         let mut dirs = VecDeque::new();
         let mut visited_dirs = HashSet::new();
         for root in &roots {
             let device_id = if filter_opts.one_file_system {
-                let meta = be.stat(root)?.ok_or_else(|| {
+                let meta = self.be.stat(root)?.ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::NotFound,
                         format!("root path `{}` does not exist", root.display()),
@@ -233,8 +228,8 @@ impl<'a, R: ReadSource> ListAdapter<'a, R> {
             }
         }
 
-        Ok(Self {
-            be,
+        Ok(ListAdapter {
+            be: self.be,
             roots,
             filter_opts,
             excludes,
@@ -242,8 +237,69 @@ impl<'a, R: ReadSource> ListAdapter<'a, R> {
             dirs,
             visited_dirs,
             current_batch: VecDeque::new(),
-            recursive: !opts.no_recursive,
+            recursive: self.recursive,
         })
+    }
+}
+
+/// Walks (optionally recursively) the contents of one or more
+/// [`WriteSource`] paths, applying [`FilterOptions`] and glob/gitignore
+/// excludes.
+///
+/// Matches the filtering behavior of `ignore::WalkBuilder`, including
+/// `.gitignore`, `.git/info/exclude`, and custom ignore files, but drives
+/// it against an arbitrary [`ReadSource`] backend instead of `std::fs`.
+///
+/// When constructed with multiple roots, each root is walked
+/// independently with its own gitignore ancestor chain and (if
+/// `one_file_system` is set) its own device id, but all roots share a
+/// single symlink-cycle guard so a directory reachable from two roots is
+/// only descended into once.
+///
+/// All paths — both caller-supplied roots and every path yielded by
+/// iteration — are normalized to use `/` as a separator; see
+/// [`to_forward_slash`].
+///
+/// A `ListAdapter` is immutable and produced only via [`ListBuilder::build`];
+/// it exposes no setters, so every property of the walk is fixed once
+/// construction succeeds.
+pub struct ListAdapter<'a, R: ReadSource> {
+    be: &'a R,
+    roots: Vec<PathBuf>,
+    recursive: bool,
+    filter_opts: FilterOptions,
+    excludes: Option<ExcludeFilter>,
+    gitignore: GitignoreLayers<'a, R>,
+
+    dirs: VecDeque<PendingDir>,
+    current_batch: VecDeque<File>,
+    /// Guards against symlink cycles when the backend reports a
+    /// symlinked directory as a plain directory, and against revisiting
+    /// a directory reachable from more than one root.
+    visited_dirs: HashSet<PathBuf>,
+}
+
+impl<'a, R: ReadSource> ListAdapter<'a, R> {
+    /// Starts a [`ListBuilder`] for constructing a `ListAdapter`.
+    ///
+    /// # Arguments
+    ///
+    /// * `be` - The backend to read directory entries and metadata from.
+    ///
+    /// # Returns
+    ///
+    /// A [`ListBuilder`] ready to be configured and built.
+    pub fn builder(be: &'a R) -> ListBuilder<'a, R> {
+        ListBuilder::new(be)
+    }
+
+    /// Returns the backend this lister reads from.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the [`ReadSource`] backend supplied at construction.
+    pub fn rbe(&self) -> &'a R {
+        &self.be
     }
 
     /// The first root path this lister was constructed with.

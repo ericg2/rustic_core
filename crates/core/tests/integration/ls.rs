@@ -27,7 +27,11 @@ fn test_ls(
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
     let src = LocalSource::new(source.path());
     // backup test-data
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let snapshot =  repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     // test non-existing entries
     let mut node = Node::new_node(

@@ -10,6 +10,7 @@ pub(crate) mod node;
 pub(crate) mod token;
 pub(crate) mod warm_up;
 pub(crate) mod command;
+pub(crate) mod multi;
 
 use bytes::{Buf, Bytes, buf::Reader};
 use derive_setters::Setters;
@@ -309,7 +310,7 @@ pub trait WriteSourceConfig: Serialize + DeserializeOwned + Send + Sync {
 /// `Lister` and `Reader` associated types are replaced with
 /// `Box<dyn FileLister>` and `Box<dyn ReadHandle>`, so `dyn ReadSource` can
 /// be used directly.
-pub trait ReadSource: Send + Sync + 'static {
+pub trait ReadSource: Send + Sync {
     /// Returns a human-readable location string for this backend, used for
     /// logging and error messages.
     fn location(&self) -> String;
@@ -350,7 +351,7 @@ pub trait ReadSource: Send + Sync + 'static {
 ///
 /// Extends [`ReadSource`]; `Writer` associated type replaced with
 /// `Box<dyn WriteHandle>` so `dyn WriteSource` is usable directly.
-pub trait WriteSource: ReadSource + Send + Sync + 'static {
+pub trait WriteSource: ReadSource + Send + Sync {
     /// Removes the given directory (relative to the base path), including
     /// all of its contents, recursively.
     ///
