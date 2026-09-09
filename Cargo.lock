@@ -4332,6 +4332,7 @@ dependencies = [
  "semver",
  "serde",
  "serde-value",
+ "serde_json",
  "serde_with",
  "strum",
  "tar",
