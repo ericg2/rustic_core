@@ -8,7 +8,6 @@ use serde_with::{DisplayFromStr, serde_as};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::Path;
-use std::sync::Arc;
 
 fn read_file_contents(log_name: &'static str, path: impl AsRef<Path>) -> RusticResult<String> {
     let mut buf = String::new();

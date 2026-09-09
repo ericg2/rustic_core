@@ -626,7 +626,7 @@ fn meta_from_node(n: &Node) -> Metadata {
         EntryMode::FILE
     };
 
-    let mut meta = Metadata::new(mode).with_content_length(n.meta.size);
+    let meta = Metadata::new(mode).with_content_length(n.meta.size);
 
     let timestamp = n
         .meta

@@ -94,7 +94,6 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use ignore::overrides::Override;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
 
 use crate::{Excludes, File, ReadSource};
 

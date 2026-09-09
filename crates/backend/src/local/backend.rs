@@ -1,21 +1,15 @@
-use aho_corasick::AhoCorasick;
-use bytes::Bytes;
-use derive_setters::Setters;
-use ignore::DirEntry;
-use log::{debug, error, trace, warn};
+use log::warn;
 use std::fs::File;
 use std::{
     fmt::Debug,
-    fs::{self, Metadata, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    process::Command,
 };
-use walkdir::WalkDir;
 
 use crate::local::{config::LocalConfig, mapper};
 use rustic_core::{
-    ALL_FILE_TYPES, BytesList, CommandInput, ErrorKind, FileType, Id, Node, ReadBackend,
+    BytesList, ErrorKind, Node,
     ReadHandle, ReadSource, RusticError, RusticResult, WriteBackend, WriteSource,
 };
 
@@ -70,30 +64,30 @@ impl ReadSource for LocalSource {
         Ok(Box::new(entries))
     }
 
-    fn stat(&self, path: &Path) -> std::io::Result<Option<rustic_core::Metadata>> {
+    fn stat(&self, path: &Path) -> io::Result<Option<rustic_core::Metadata>> {
         let path = self.fix_path(path);
         match fs::symlink_metadata(&path) {
             Ok(meta) => Ok(Some(mapper::convert_meta(&path, &meta))),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(err) => return Err(err.into()),
         }
     }
 }
 
 impl WriteSource for LocalSource {
-    fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
         let path = self.fix_path(path);
         fs::remove_dir_all(&path)?;
         Ok(())
     }
 
-    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
         let path = self.fix_path(path);
         fs::remove_file(&path)?;
         Ok(())
     }
 
-    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
         let path = self.fix_path(path);
         fs::create_dir_all(&path)?;
         Ok(())
@@ -102,9 +96,9 @@ impl WriteSource for LocalSource {
     fn set_restore_metadata(
         &self,
         path: &Path,
-        node: &rustic_core::Node,
+        node: &Node,
         opts: &rustic_core::RestoreOptions,
-    ) -> std::io::Result<()> {
+    ) -> io::Result<()> {
         let path = &self.fix_path(path);
         mapper::create_special(path, node)
             .unwrap_or_else(|_| warn!("restore {}: creating special file failed.", path.display()));
@@ -131,7 +125,7 @@ impl WriteSource for LocalSource {
         Ok(())
     }
 
-    fn set_length(&self, path: &Path, size: u64) -> std::io::Result<()> {
+    fn set_length(&self, path: &Path, size: u64) -> io::Result<()> {
         let path = self.fix_path(path);
         OpenOptions::new()
             .create(true)
@@ -142,7 +136,7 @@ impl WriteSource for LocalSource {
         Ok(())
     }
 
-    fn open_replace(&self, path: &Path) -> std::io::Result<Box<dyn rustic_core::WriteHandle>> {
+    fn open_replace(&self, path: &Path) -> io::Result<Box<dyn rustic_core::WriteHandle>> {
         let path = self.fix_path(path);
         let ret = File::options()
             .write(true)
@@ -156,7 +150,7 @@ impl WriteSource for LocalSource {
     /// temp file (`<name>-tmp-`) via its `reader()` (no intermediate
     /// `Vec<u8>` buffering of the whole content), syncs it to disk, then
     /// renames it into place.
-    fn write_all(&self, path: &Path, content: BytesList) -> std::io::Result<()> {
+    fn write_all(&self, path: &Path, content: BytesList) -> io::Result<()> {
         fn write_local_file(filename: &Path, mut reader: impl Read, length: u64) -> io::Result<()> {
             let mut file = OpenOptions::new()
                 .create(true)
@@ -181,7 +175,7 @@ impl WriteSource for LocalSource {
             filename
                 .file_name()
                 .ok_or_else(|| {
-                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+                    io::Error::new(io::ErrorKind::InvalidInput, "path has no file name")
                 })?
                 .to_string_lossy()
                 .to_string()
@@ -208,7 +202,7 @@ impl WriteSource for LocalSource {
         Ok(())
     }
 
-    fn write_at(&self, path: &Path, offset: u64, data: &[u8]) -> std::io::Result<()> {
+    fn write_at(&self, path: &Path, offset: u64, data: &[u8]) -> io::Result<()> {
         let path = self.fix_path(path);
         let mut file = OpenOptions::new()
             .create(true)
@@ -221,7 +215,7 @@ impl WriteSource for LocalSource {
         Ok(())
     }
 
-    fn hard_link(&self, path: &Path, item: &Path) -> std::io::Result<()> {
+    fn hard_link(&self, path: &Path, item: &Path) -> io::Result<()> {
         let path = self.fix_path(path);
         let item = self.fix_path(item);
         fs::hard_link(&path, &item)?;

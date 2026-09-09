@@ -1,9 +1,8 @@
-use bytes::Bytes;
 use opendal::Buffer;
 use opendal::blocking::{Operator, StdReader, StdWriter};
 use opendal::layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer};
 use opendal::options::{DeleteOptions, ListOptions, WriteOptions};
-use rayon::prelude::{IntoParallelIterator, ParallelIterator};
+use rayon::prelude::ParallelIterator;
 use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -14,7 +13,7 @@ use crate::BackendBuilder;
 use crate::opendal::config::{OpenDALConfig, Retry, Throttle};
 use crate::opendal::log::OpenLogLayer;
 use crate::repo::RepoAdapter;
-use rustic_core::{BytesList, ErrorKind, FileLister, FileType, Id, Metadata, Node, NodeType, ReadBackend, ReadHandle, ReadSource, ReadSourceConfig, RepositoryBackends, RusticError, RusticResult, WriteBackend, WriteHandle, WriteSource};
+use rustic_core::{BytesList, ErrorKind, FileLister, FileType, Id, Metadata, Node, NodeType, ReadHandle, ReadSource, ReadSourceConfig, RepositoryBackends, RusticError, RusticResult, WriteHandle, WriteSource};
 
 mod constants {
     /// Default number of retries
@@ -165,7 +164,7 @@ impl BackendBuilder for OpenDALSource {
 struct OpenDALWrite(StdWriter);
 
 impl WriteHandle for OpenDALWrite {
-    fn close(&mut self) -> std::io::Result<()> {
+    fn close(&mut self) -> io::Result<()> {
         self.0.flush()?;
         self.0.close()?;
         Ok(())
@@ -173,11 +172,11 @@ impl WriteHandle for OpenDALWrite {
 }
 
 impl Write for OpenDALWrite {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.write(buf)
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    fn flush(&mut self) -> io::Result<()> {
         self.0.flush()
     }
 }
@@ -185,19 +184,19 @@ impl Write for OpenDALWrite {
 struct OpenDALRead(StdReader);
 
 impl ReadHandle for OpenDALRead {
-    fn close(&mut self) -> std::io::Result<()> {
+    fn close(&mut self) -> io::Result<()> {
         Ok(())
     }
 }
 
 impl Read for OpenDALRead {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.0.read(buf)
     }
 }
 
 impl Seek for OpenDALRead {
-    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
         self.0.seek(pos)
     }
 }
@@ -208,7 +207,7 @@ impl ReadSource for OpenDALSource {
         format!("opendal:{}:{}", info.scheme(), info.name())
     }
 
-    fn open_read(&self, path: &Path) -> std::io::Result<Box<dyn ReadHandle>> {
+    fn open_read(&self, path: &Path) -> io::Result<Box<dyn ReadHandle>> {
         let path = Self::fix_path(path, false);
         let handle = self.op.reader(&path)?.into_std_read(..)?;
         Ok(Box::new(OpenDALRead(handle)))
@@ -266,7 +265,7 @@ impl ReadSource for OpenDALSource {
         Ok(Box::new(lister))
     }
 
-    fn stat(&self, path: &Path) -> std::io::Result<Option<rustic_core::Metadata>> {
+    fn stat(&self, path: &Path) -> io::Result<Option<Metadata>> {
         let path = Self::fix_path(path, false);
         match self.op.stat(&path) {
             Ok(meta) => Ok(Some(Self::resolve_meta(&meta))),
@@ -277,7 +276,7 @@ impl ReadSource for OpenDALSource {
 }
 
 impl WriteSource for OpenDALSource {
-    fn remove_dir(&self, path: &Path) -> std::io::Result<()> {
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
         let path = Self::fix_path(path, true);
         self.op.delete_options(
             &path,
@@ -289,13 +288,13 @@ impl WriteSource for OpenDALSource {
         Ok(())
     }
 
-    fn remove_file(&self, path: &Path) -> std::io::Result<()> {
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
         let path = Self::fix_path(path, false);
         self.op.delete(&path)?;
         Ok(())
     }
 
-    fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
+    fn create_dir_all(&self, path: &Path) -> io::Result<()> {
         let path = Self::fix_path(path, true);
         if path != "/" {
             // OpenDAL does not allow creating a root directory. Don't do this on restore!
@@ -307,13 +306,13 @@ impl WriteSource for OpenDALSource {
     fn set_restore_metadata(
         &self,
         _path: &Path,
-        _node: &rustic_core::Node,
+        _node: &Node,
         _opts: &rustic_core::RestoreOptions,
-    ) -> std::io::Result<()> {
+    ) -> io::Result<()> {
         Ok(())
     }
 
-    fn set_length(&self, path: &Path, size: u64) -> std::io::Result<()> {
+    fn set_length(&self, path: &Path, size: u64) -> io::Result<()> {
         let path = Self::fix_path(path, false);
         if size == 0 {
             self.op.write(&path, Buffer::new())?;
@@ -327,7 +326,7 @@ impl WriteSource for OpenDALSource {
         ))
     }
 
-    fn open_replace(&self, path: &Path) -> std::io::Result<Box<dyn WriteHandle>> {
+    fn open_replace(&self, path: &Path) -> io::Result<Box<dyn WriteHandle>> {
         let path = Self::fix_path(path, false);
         let handle = self
             .op
@@ -342,17 +341,17 @@ impl WriteSource for OpenDALSource {
         Ok(Box::new(OpenDALWrite(handle)))
     }
 
-    fn write_all(&self, path: &Path, bytes: BytesList) -> std::io::Result<()> {
+    fn write_all(&self, path: &Path, bytes: BytesList) -> io::Result<()> {
         let path = Self::fix_path(path, false);
         self.op.write(&path, bytes.into_vec())?;
         Ok(())
     }
 
-    fn write_at(&self, _path: &Path, offset: u64, data: &[u8]) -> std::io::Result<()> {
+    fn write_at(&self, _path: &Path, _offset: u64, _data: &[u8]) -> io::Result<()> {
         Err(io::ErrorKind::Unsupported.into())
     }
 
-    fn hard_link(&self, path: &Path, item: &Path) -> std::io::Result<()> {
+    fn hard_link(&self, _path: &Path, _item: &Path) -> io::Result<()> {
         Err(io::ErrorKind::Unsupported.into())
     }
 

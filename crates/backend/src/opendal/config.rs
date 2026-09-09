@@ -17,7 +17,6 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::Arc;
 
 use bytesize::ByteSize;
 use derive_setters::Setters;

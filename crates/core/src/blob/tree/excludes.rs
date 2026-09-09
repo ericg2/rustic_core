@@ -4,7 +4,6 @@ use derive_setters::Setters;
 use ignore::overrides::{Override, OverrideBuilder};
 use serde::{Deserialize, Serialize};
 
-use crate::{ErrorKind, RusticError, RusticResult};
 
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 #[cfg_attr(feature = "merge", derive(conflate::Merge))]

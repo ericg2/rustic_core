@@ -19,13 +19,12 @@ use log::info;
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    CancelToken, FileLister, ReadSource, RepositoryBackends, RusticError, WriteSource,
+    CancelToken, ReadSource, RepositoryBackends, RusticError, WriteSource,
     backend::{
         FileType, FindInBackend, ReadBackend, WriteBackend,
         cache::{Cache, CachedBackend},
         decrypt::{DecryptBackend, DecryptReadBackend, DecryptWriteBackend},
         hotcold::HotColdBackend,
-        list::ListAdapter,
         node::Node,
         warm_up::WarmUpAccessBackend,
     },

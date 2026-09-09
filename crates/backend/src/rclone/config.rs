@@ -4,7 +4,6 @@ use rustic_core::{BackendConfig, RusticResult, WriteBackend};
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 use std::collections::HashMap;
-use std::sync::Arc;
 
 #[serde_as]
 #[derive(Clone, Debug, Setters, Serialize, Deserialize, Default)]

@@ -4,17 +4,16 @@ use std::{collections::BTreeMap, sync::Arc};
 use strum::{Display, EnumString};
 
 use rustic_core::{
-    BackendConfig, BackendOptions, ErrorKind, RepositoryBackends, RepositoryOptions, RusticError,
-    RusticResult, WriteBackend, WriteSource,
+    BackendConfig, BackendOptions, ErrorKind, RepositoryBackends, RusticError,
+    RusticResult, WriteBackend,
 };
 
 use crate::util::{BackendLocation, location_to_type_and_path};
 
-use crate::local::{LocalConfig, LocalSource};
-use crate::opendal::{OpenDALConfig, OpenDALSource};
-use crate::rclone::{RcloneBackend, RcloneConfig};
-use crate::repo::RepoAdapter;
-use crate::rest::{RestBackend, RestConfig};
+use crate::local::LocalConfig;
+use crate::opendal::OpenDALConfig;
+use crate::rclone::RcloneConfig;
+use crate::rest::RestConfig;
 #[cfg(feature = "clap")]
 use clap::ValueHint;
 

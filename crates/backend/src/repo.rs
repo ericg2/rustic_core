@@ -1,16 +1,14 @@
 use std::{
     io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
-    process::Command,
 };
 
-use aho_corasick::AhoCorasick;
 use bytes::Bytes;
-use log::{debug, error, trace, warn};
+use log::{error, trace};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use typed_path::UnixPathBuf;
 
-use rustic_core::{BytesList, CommandInput, ErrorKind, FileType, Id, ListAdapter, ListOptions, Metadata, ReadBackend, ReadSource, RepositoryOptions, RusticError, RusticResult, WriteBackend, WriteSource, ALL_FILE_TYPES};
+use rustic_core::{BytesList, ErrorKind, FileType, Id, ListAdapter, Metadata, ReadBackend, ReadSource, RusticError, RusticResult, WriteBackend, WriteSource, ALL_FILE_TYPES};
 
 // ---------------------------------------------------------------------
 // Shared, backend-agnostic helpers

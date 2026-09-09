@@ -1,11 +1,10 @@
 use crate::local::backend::LocalSource;
 use derive_setters::Setters;
-use rustic_core::{BackendConfig, ErrorKind, RusticError, RusticResult, WriteBackend, WriteSource};
+use rustic_core::{BackendConfig, RusticResult, WriteBackend};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use crate::repo::RepoAdapter;
 
 #[serde_as]

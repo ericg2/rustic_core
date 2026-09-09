@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use crate::{RepositoryBackends, BackendConfig, RusticResult};
+use crate::BackendConfig;
 
 #[cfg(feature = "clap")]
 use clap::ValueHint;

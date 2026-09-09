@@ -5,7 +5,7 @@ use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
 use crate::{
-    CancelToken, File, FileLister, ListAdapter, ListOptions, ReadSource, WriteHandle, WriteSource,
+    CancelToken, File, FileLister, ListAdapter, ReadSource, WriteHandle, WriteSource,
     backend::{
         FileType, ReadBackend,
         decrypt::DecryptReadBackend,
@@ -17,14 +17,13 @@ use crate::{
     repository::{IndexedFull, IndexedTree, Open, Repository},
 };
 use bytes::Bytes;
-use dashmap::{DashMap, DashSet};
+use dashmap::DashSet;
 use itertools::Itertools;
 use rayon::ThreadPoolBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use std::sync::{Arc, Condvar};
 use std::{cmp::Ordering, collections::BTreeMap, path::PathBuf, sync::Mutex};
 
 pub(crate) mod constants {
@@ -573,7 +572,7 @@ fn restore_contents<S: Open>(
     token.check()?;
 
     let be = repo.dbe();
-    let num_files = file_lengths.len();
+    let _num_files = file_lengths.len();
 
     // For random-write: create empty files now; non-empty files
     // are lazily allocated on first write via the sizes mutex.

@@ -8,7 +8,7 @@ use jiff::SignedDuration;
 use log::{trace, warn};
 use reqwest::{
     Body, Certificate, Client, ClientBuilder, Identity, Url,
-    header::{HeaderMap, HeaderValue},
+    header::HeaderMap,
 };
 use serde::Deserialize;
 use tokio::runtime::Runtime;

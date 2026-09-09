@@ -6,7 +6,6 @@ use std::num::TryFromIntError;
 use std::path::Path;
 
 use jiff::Timestamp;
-use serde::{Deserialize, Serialize};
 use rustic_core::NodeType;
 
 use std::path::PathBuf;
@@ -25,11 +24,11 @@ fn strip_roots(path: &Path, roots: &Vec<PathBuf>) -> PathBuf {
 }
 
 pub(crate) fn convert_meta(path: &Path, m: &std::fs::Metadata) -> rustic_core::Metadata {
-    let (uid, user, gid, group) = utils::user_group(m);
-    let (mode, inode, links) = utils::nix_infos(m);
-    let extended_attributes = utils::xattrs(path).unwrap_or_default();
+    let (uid, user, gid, group) = user_group(m);
+    let (mode, inode, links) = nix_infos(m);
+    let extended_attributes = xattrs(path).unwrap_or_default();
     let size = if m.is_dir() { 0 } else { m.len() };
-    let device_id = utils::device_id(m);
+    let device_id = device_id(m);
     rustic_core::Metadata {
         mode,
         mtime: m.modified().ok().and_then(|x| Timestamp::try_from(x).ok()),
@@ -59,7 +58,7 @@ pub enum IgnoreErrorKind {
     /// Error reading link target for `{path:?}`: `{source:?}`
     ErrorLink {
         path: PathBuf,
-        source: std::io::Error,
+        source: io::Error,
     },
     #[cfg(not(windows))]
     /// Error converting ctime `{ctime}` and `ctime_nsec` `{ctime_nsec}` to Utc Timestamp: `{source:?}`

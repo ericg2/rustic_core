@@ -695,7 +695,7 @@ pub struct BytesListReader {
 }
 
 impl Read for BytesListReader {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         loop {
             match self.reader.read(buf) {
                 Ok(0) => match self.remaining.next() {
@@ -846,7 +846,7 @@ impl ReadBackend for Arc<dyn WriteBackend> {
     }
 }
 
-impl std::fmt::Debug for dyn WriteBackend {
+impl Debug for dyn WriteBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "WriteBackend{{{}}}", self.location())
     }

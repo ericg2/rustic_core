@@ -20,7 +20,7 @@ use thiserror::Error;
 use zstd::stream::decode_all;
 
 use crate::{
-    CancelToken, DataId, ErrorKind, RusticError, TreeId,
+    DataId, ErrorKind, RusticError, TreeId,
     backend::{FileType, ReadBackend, cache::Cache, decrypt::DecryptReadBackend, node::NodeType},
     blob::{BlobId, BlobType, tree::TreeStreamerOnce},
     crypto::hasher::hash,

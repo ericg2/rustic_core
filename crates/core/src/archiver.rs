@@ -18,7 +18,7 @@ use crate::{
         file_archiver::FileArchiver, parent::Parent, tree::TreeIterator,
         tree_archiver::TreeArchiver,
     },
-    backend::{File, FileLister, decrypt::DecryptFullBackend},
+    backend::{FileLister, decrypt::DecryptFullBackend},
     blob::BlobType,
     error::RusticResult,
     index::{

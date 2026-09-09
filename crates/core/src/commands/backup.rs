@@ -10,11 +10,11 @@ use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    CancelToken, FileLister, ListAdapter, ListOptions, ReadSource,
+    CancelToken, ListAdapter, ListOptions, ReadSource,
     archiver::{Archiver, parent::Parent},
     error::{ErrorKind, RusticError, RusticResult},
     repofile::{
-        PathList, SnapshotFile,
+        SnapshotFile,
         snapshotfile::{
             SnapshotId,
             grouping::{SnapshotGroup, SnapshotGroupCriterion},
