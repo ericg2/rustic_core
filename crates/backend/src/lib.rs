@@ -78,7 +78,6 @@ mod util;
 mod repo;
 mod tests;
 
-use serde_json::Value;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 // rustic_backend Public API
@@ -86,35 +85,6 @@ pub use crate::choose::{BackendBuilder, SupportedBackend};
 
 // re-export for error handling and backwards compatibility.
 pub use rustic_core::{BackendOptions, ErrorKind, RusticError, RusticResult, Severity, Status};
-
-pub(crate) fn normalize_value<V: Into<String>>(v: V) -> Value {
-    match v.into().as_str() {
-        "" | "null" | "NULL" | "None" => Value::Null,
-        s => Value::String(s.to_string()),
-    }
-}
-//
-// pub(crate) fn struct_to_map<T: serde::Serialize>(value: &T) -> HashMap<String, String> {
-//     let v = serde_json::to_value(value).unwrap();
-//
-//     let obj = v
-//         .as_object()
-//         .expect("expected struct to serialize into JSON object");
-//
-//     obj.iter()
-//         .map(|(k, v)| {
-//             let s = match v {
-//                 Value::String(s) => s.clone(),
-//                 Value::Number(n) => n.to_string(),
-//                 Value::Bool(b) => b.to_string(),
-//                 Value::Null => String::new(),
-//                 other => other.to_string(),
-//             };
-//
-//             (k.clone(), s)
-//         })
-//         .collect()
-// }
 
 pub(crate) fn struct_to_map<T: serde::Serialize>(value: &T) -> HashMap<String, String> {
     fn insert_into_key(key: String, v: serde_value::Value, out: &mut HashMap<String, String>) {
