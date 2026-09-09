@@ -4,6 +4,8 @@ pub(crate) mod tree;
 pub(crate) mod tree_archiver;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::scope;
 
 use jiff::Zoned;
@@ -11,7 +13,7 @@ use log::warn;
 use pariter::IteratorExt;
 
 use crate::{
-    CancelToken, ListAdapter, Progress, ReadSource,
+    CancelToken, ErrorKind, ListAdapter, Progress, ReadSource, RusticError,
     archiver::{
         file_archiver::FileArchiver, parent::Parent, tree::TreeIterator,
         tree_archiver::TreeArchiver,
@@ -25,6 +27,12 @@ use crate::{
     },
     repofile::{configfile::ConfigFile, snapshotfile::SnapshotFile},
 };
+
+/// Report a source-file error, count it, and continue the backup.
+fn report_source_error(p: &Progress, errors: &AtomicU64, during: &'static str, err: &RusticError) {
+    _ = errors.fetch_add(1, Ordering::Relaxed);
+    p.error(err.context_value("path"), during, &err.display_log());
+}
 
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
 /// Tree stack empty
@@ -126,6 +134,7 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
     /// * If sending the message to the raw packer fails.
     /// * If the index file could not be serialized.
     /// * If the time is not in the range of `Local::now()`.
+
     pub fn archive(
         mut self,
         src: ListAdapter<'_, R>,
@@ -136,17 +145,26 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
         token: CancelToken,
     ) -> RusticResult<SnapshotFile> {
         token.check()?;
+
+        let error_count = Arc::new(AtomicU64::new(0));
+
         scope(|s| -> RusticResult<_> {
             // filter out errors and handle as_path; lazily grow the
             // progress bar's length as files are discovered, since src
             // is single-pass and can't be scanned twice anymore.
             let track_size = !no_scan && !p.is_hidden();
             let mut total_size: u64 = 0;
+
+            let scan_error_count = Arc::clone(&error_count);
             let iter = src.filter_map(move |item| match item {
                 Err(err) => {
-                    warn!("ignoring error: {}", err.to_string());
+                    let err =
+                        RusticError::with_source(ErrorKind::Backend, "Failed to fetch file", err);
+
+                    report_source_error(p, &scan_error_count, "scan", &err);
                     None
                 }
+
                 Ok(file) => {
                     if track_size {
                         total_size += file.size();
@@ -154,10 +172,13 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
                     }
 
                     let is_dir = file.is_dir();
+
                     // Only files need to be reopened for content later;
                     // dirs (and anything else) carry no source path.
                     let src_path = (!is_dir).then(|| file.path().to_path_buf());
+
                     let path = file.path();
+
                     let snapshot_path = if let Some(as_path) = as_path {
                         crate::join_force(as_path, path)
                     } else {
@@ -167,6 +188,7 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
                     // File -> Node, dropping File's own path since we pair
                     // the node with `snapshot_path` (which may be remapped).
                     let (_, node) = file.into_tree();
+
                     Some(if is_dir {
                         (snapshot_path, node, src_path)
                     } else {
@@ -186,20 +208,22 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
             let iter = TreeIterator::new(iter);
 
             // use parent snapshot
-            iter.filter_map(
-                |item| match self.parent.process(&self.be, self.index, item) {
-                    Ok(item) => Some(item),
-                    Err(err) => {
-                        warn!("ignoring error reading parent snapshot: {err:?}");
-                        None
-                    }
-                },
-            )
-            // archive files in parallel — check before each unit of work so
-            // in-flight threads drain quickly once canceled. Note: errors here
-            // are swallowed by the filter_map below; the definitive stop is in
-            // try_for_each.
-            .parallel_map_scoped(s, |item| {
+            let iter =
+                iter.filter_map(
+                    |item| match self.parent.process(&self.be, self.index, item) {
+                        Ok(item) => Some(item),
+
+                        Err(err) => {
+                            warn!("ignoring error reading parent snapshot: {err:?}");
+                            None
+                        }
+                    },
+                );
+
+            let archival_error_count = Arc::clone(&error_count);
+            // archive files in parallel — check before each unit of work
+            // so in-flight threads drain quickly once canceled.
+            iter.parallel_map_scoped(s, |item| {
                 token.check()?;
                 self.file_archiver.process(item, p)
             })
@@ -207,12 +231,13 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
             .filter_map(|item| match item {
                 Ok(item) => Some(item),
                 Err(err) => {
-                    warn!("ignoring error: {}", err.display_log());
+                    report_source_error(p, &archival_error_count, "archival", &err);
                     None
                 }
             })
-            // This is where cancellation errors actually propagate and unwind
-            // the pipeline — the check here is the authoritative stop point.
+            // This is where cancellation errors actually propagate and
+            // unwind the pipeline — the check here is the authoritative
+            // stop point.
             .try_for_each(|item| {
                 token.check()?;
                 self.tree_archiver.add(item)
@@ -227,11 +252,13 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
 
         let stats = self.file_archiver.finalize()?;
         let (id, mut summary) = self.tree_archiver.finalize(self.parent.tree_id())?;
+
         stats.apply(&mut summary, BlobType::Data);
+
+        summary.error_count = error_count.load(Ordering::Relaxed);
+
         self.snap.tree = id;
-
         self.indexer.write().unwrap().finalize()?;
-
         summary.finalize(&self.snap.time);
         self.snap.summary = Some(summary);
 
@@ -241,6 +268,7 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
         }
 
         p.finish();
+
         Ok(self.snap)
     }
 }

@@ -14,11 +14,7 @@ use crate::BackendBuilder;
 use crate::opendal::config::{OpenDALConfig, Retry, Throttle};
 use crate::opendal::log::OpenLogLayer;
 use crate::repo::RepoAdapter;
-use rustic_core::{
-    ErrorKind, FileLister, FileType, Id, Metadata, Node, NodeType, ReadBackend, ReadHandle,
-    ReadSource, ReadSourceConfig, RepositoryBackends, RusticError, RusticResult, WriteBackend,
-    WriteHandle, WriteSource,
-};
+use rustic_core::{BytesList, ErrorKind, FileLister, FileType, Id, Metadata, Node, NodeType, ReadBackend, ReadHandle, ReadSource, ReadSourceConfig, RepositoryBackends, RusticError, RusticResult, WriteBackend, WriteHandle, WriteSource};
 
 mod constants {
     /// Default number of retries
@@ -346,9 +342,9 @@ impl WriteSource for OpenDALSource {
         Ok(Box::new(OpenDALWrite(handle)))
     }
 
-    fn write_all(&self, path: &Path, bytes: Bytes) -> std::io::Result<()> {
+    fn write_all(&self, path: &Path, bytes: BytesList) -> std::io::Result<()> {
         let path = Self::fix_path(path, false);
-        self.op.write(&path, bytes)?;
+        self.op.write(&path, bytes.into_vec())?;
         Ok(())
     }
 

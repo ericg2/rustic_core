@@ -3,7 +3,7 @@ use zstd::decode_all;
 
 use crate::{
     backend::{
-        FileType, ReadBackend, WriteBackend,
+        BytesList, FileType, ReadBackend, WriteBackend,
         decrypt::{DecryptFullBackend, DecryptReadBackend, DecryptWriteBackend},
     },
     error::{ErrorKind, RusticError, RusticResult},
@@ -65,7 +65,7 @@ impl<BE: DecryptFullBackend> DecryptReadBackend for DryRunBackend<BE> {
                         ErrorKind::Internal,
                         "Decoding zstd compressed data failed. This can happen if the data is corrupted. Please check the backend for corruption and try again. You can also try to run `rustic check` to check for corruption.",
                         err
-                        )
+                    )
                 )
                 ?, // 2 indicates compressed data following
             _ => {
@@ -73,10 +73,10 @@ impl<BE: DecryptFullBackend> DecryptReadBackend for DryRunBackend<BE> {
                     RusticError::new(
                         ErrorKind::Unsupported,
                         "Decryption not supported. The data is not in a supported format.",
-                ));
+                    ));
             }
         }
-        .into())
+            .into())
     }
 }
 
@@ -159,11 +159,17 @@ impl<BE: DecryptFullBackend> WriteBackend for DryRunBackend<BE> {
         }
     }
 
-    fn write_bytes(&self, tpe: FileType, id: &Id, cacheable: bool, buf: Bytes) -> RusticResult<()> {
+    fn write_bytes(
+        &self,
+        tpe: FileType,
+        id: &Id,
+        cacheable: bool,
+        content: BytesList,
+    ) -> RusticResult<()> {
         if self.dry_run {
             Ok(())
         } else {
-            self.be.write_bytes(tpe, id, cacheable, buf)
+            self.be.write_bytes(tpe, id, cacheable, content)
         }
     }
 

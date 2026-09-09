@@ -15,9 +15,7 @@ use std::{
 use url::Url;
 
 use crate::rclone::RcloneConfig;
-use rustic_core::{
-    CommandInput, ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult, WriteBackend,
-};
+use rustic_core::{BytesList, CommandInput, ErrorKind, FileType, Id, ReadBackend, RusticError, RusticResult, WriteBackend};
 
 pub(super) mod constants {
     /// The default command called if no other is specified
@@ -377,7 +375,7 @@ impl WriteBackend for RcloneBackend {
     /// * `id` - The id of the file.
     /// * `cacheable` - Whether the data should be cached.
     /// * `buf` - The data to write.
-    fn write_bytes(&self, tpe: FileType, id: &Id, cacheable: bool, buf: Bytes) -> RusticResult<()> {
+    fn write_bytes(&self, tpe: FileType, id: &Id, cacheable: bool, buf: BytesList) -> RusticResult<()> {
         self.rest.write_bytes(tpe, id, cacheable, buf)
     }
 

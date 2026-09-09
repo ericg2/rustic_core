@@ -130,7 +130,7 @@ pub use jiff;
 // rustic_core Public API
 pub use crate::{
     backend::{
-        ALL_FILE_TYPES, BackendConfig, File, FileLister, FileType, ListOptions, ReadBackend,
+        ALL_FILE_TYPES, BytesList, BackendConfig, File, FileLister, FileType, ListOptions, ReadBackend,
         ReadHandle, ReadSource, ReadSourceConfig, RepositoryBackends, WriteBackend, WriteHandle,
         WriteSource, WriteSourceConfig,
         choose::BackendOptions,

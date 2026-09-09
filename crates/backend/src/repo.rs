@@ -10,11 +10,7 @@ use log::{debug, error, trace, warn};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use typed_path::UnixPathBuf;
 
-use rustic_core::{
-    ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, ListAdapter, ListOptions, Metadata,
-    ReadBackend, ReadSource, RepositoryOptions, RusticError, RusticResult, WriteBackend,
-    WriteSource,
-};
+use rustic_core::{BytesList, CommandInput, ErrorKind, FileType, Id, ListAdapter, ListOptions, Metadata, ReadBackend, ReadSource, RepositoryOptions, RusticError, RusticResult, WriteBackend, WriteSource, ALL_FILE_TYPES};
 
 // ---------------------------------------------------------------------
 // Shared, backend-agnostic helpers
@@ -266,7 +262,7 @@ impl<S: WriteSource> WriteBackend for RepoAdapter<S> {
         tpe: FileType,
         id: &Id,
         _cacheable: bool,
-        buf: Bytes,
+        buf: BytesList,
     ) -> RusticResult<()> {
         trace!("writing tpe: {:?}, id: {}", &tpe, &id);
         let filename = repo_path(tpe, id);

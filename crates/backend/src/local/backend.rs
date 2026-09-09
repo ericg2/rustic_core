@@ -15,8 +15,8 @@ use walkdir::WalkDir;
 
 use crate::local::{config::LocalConfig, mapper};
 use rustic_core::{
-    ALL_FILE_TYPES, CommandInput, ErrorKind, FileType, Id, Node, ReadBackend, ReadHandle,
-    ReadSource, RusticError, RusticResult, WriteBackend, WriteSource,
+    ALL_FILE_TYPES, BytesList, CommandInput, ErrorKind, FileType, Id, Node, ReadBackend,
+    ReadHandle, ReadSource, RusticError, RusticResult, WriteBackend, WriteSource,
 };
 
 /// A local backend.
@@ -24,7 +24,7 @@ use rustic_core::{
 pub struct LocalSource(PathBuf);
 
 impl LocalSource {
-    pub fn new(path: impl AsRef<Path>) -> Self{
+    pub fn new(path: impl AsRef<Path>) -> Self {
         Self(path.as_ref().to_path_buf())
     }
 
@@ -152,13 +152,12 @@ impl WriteSource for LocalSource {
         Ok(Box::new(ret))
     }
 
-    fn write_all(&self, path: &Path, bytes: Bytes) -> std::io::Result<()> {
-        fn write_local_file(filename: &Path, buf: &[u8]) -> io::Result<()> {
-            let length = buf
-                .len()
-                .try_into()
-                .map_err(|err| std::io::Error::new(io::ErrorKind::InvalidInput, err))?;
-
+    /// Writes the given `BytesList` to `path` atomically: streams it into a
+    /// temp file (`<name>-tmp-`) via its `reader()` (no intermediate
+    /// `Vec<u8>` buffering of the whole content), syncs it to disk, then
+    /// renames it into place.
+    fn write_all(&self, path: &Path, content: BytesList) -> std::io::Result<()> {
+        fn write_local_file(filename: &Path, mut reader: impl Read, length: u64) -> io::Result<()> {
             let mut file = OpenOptions::new()
                 .create(true)
                 .truncate(true)
@@ -166,17 +165,14 @@ impl WriteSource for LocalSource {
                 .open(filename)?;
 
             file.set_len(length)?;
-            file.write_all(buf)?;
+            io::copy(&mut reader, &mut file)?;
             file.sync_all()?;
             Ok(())
         }
 
         let filename = self.fix_path(path);
         let parent = filename.parent().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "path has no parent directory",
-            )
+            io::Error::new(io::ErrorKind::InvalidInput, "path has no parent directory")
         })?;
 
         fs::create_dir_all(parent)?;
@@ -192,10 +188,18 @@ impl WriteSource for LocalSource {
                 + "-tmp-",
         );
 
-        match write_local_file(&filename_tmp, &bytes) {
-            Ok(file) => file,
+        let size = content.size();
+        let reader = content.reader();
+
+        match write_local_file(
+            &filename_tmp,
+            reader,
+            size.try_into()
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?,
+        ) {
+            Ok(()) => {}
             Err(err) => {
-                _ = std::fs::remove_file(&filename_tmp);
+                _ = fs::remove_file(&filename_tmp);
                 return Err(err);
             }
         }

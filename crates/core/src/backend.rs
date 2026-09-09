@@ -9,10 +9,9 @@ pub(crate) mod list;
 pub(crate) mod node;
 pub(crate) mod token;
 pub(crate) mod warm_up;
-mod ignore;
-mod command;
+pub(crate) mod command;
 
-use bytes::Bytes;
+use bytes::{Buf, Bytes, buf::Reader};
 use derive_setters::Setters;
 use enum_map::Enum;
 use log::trace;
@@ -410,7 +409,7 @@ pub trait WriteSource: ReadSource + Send + Sync + 'static {
     fn open_replace(&self, path: &Path) -> io::Result<Box<dyn WriteHandle>>;
 
     /// Writes all bytes in an atomic way.
-    fn write_all(&self, path: &Path, bytes: Bytes) -> io::Result<()>;
+    fn write_all(&self, path: &Path, bytes: BytesList) -> io::Result<()>;
 
     /// Writes `data` to `path` at the given byte `offset`. Creates the file
     /// if it does not already exist.
@@ -523,10 +522,9 @@ pub trait ReadBackend: Send + Sync + 'static {
     /// Get the warmup path for the given file type and id.
     ///
     /// This method returns a string representing the backend-specific path or identifier
-    /// for a file, which can be used as input to external warm-up commands. Unlike a
-    /// hypothetical `path()` method which may have different return types for different
-    /// backends, this method must always return a string that can be passed to external
-    /// programs.
+    /// for a file, which can be used as input to external warm-up commands. Unlike the
+    /// `path()` method which may have different return types for different backends,
+    /// this method must always return a string that can be passed to external programs.
     ///
     /// This is primarily used for warming up files in cold storage before they are
     /// accessed, where the warm-up command needs to know the specific backend path
@@ -642,6 +640,74 @@ pub trait FindInBackend: ReadBackend {
 
 impl<T: ReadBackend> FindInBackend for T {}
 
+
+/// A list of Bytes - used to write to backend
+#[derive(Debug, Clone, Default)]
+pub struct BytesList(Vec<Bytes>);
+
+impl From<Bytes> for BytesList {
+    fn from(value: Bytes) -> Self {
+        Self(vec![value])
+    }
+}
+impl From<Vec<u8>> for BytesList {
+    fn from(value: Vec<u8>) -> Self {
+        Self(vec![value.into()])
+    }
+}
+
+impl BytesList {
+    /// Turn this `BytesList` into  `Vec<Bytes>`
+    #[must_use]
+    pub fn into_vec(self) -> Vec<Bytes> {
+        self.0
+    }
+
+    /// Get a `Bytes` slice
+    #[must_use]
+    pub fn slice(&self) -> &[Bytes] {
+        &self.0
+    }
+
+    /// Returns the total size of the `BytesList`
+    pub fn size(&self) -> usize {
+        self.0.iter().map(Bytes::len).sum()
+    }
+
+    /// Add new `Bytes` to the `BytesList`
+    pub fn add(&mut self, bytes: Bytes) {
+        self.0.push(bytes);
+    }
+
+    /// Turn this `BytesList` into a `Read`er
+    #[must_use]
+    pub fn reader(self) -> BytesListReader {
+        let mut remaining = self.0.into_iter();
+        let reader = remaining.next().unwrap_or_default().reader();
+        BytesListReader { remaining, reader }
+    }
+}
+
+#[derive(Debug)]
+pub struct BytesListReader {
+    remaining: std::vec::IntoIter<Bytes>,
+    reader: Reader<Bytes>,
+}
+
+impl Read for BytesListReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        loop {
+            match self.reader.read(buf) {
+                Ok(0) => match self.remaining.next() {
+                    None => break Ok(0),
+                    Some(bytes) => self.reader = bytes.reader(),
+                },
+                result => break result,
+            }
+        }
+    }
+}
+
 /// Trait for backends that can write.
 /// This trait is implemented by all backends that can write data.
 pub trait WriteBackend: ReadBackend {
@@ -674,7 +740,13 @@ pub trait WriteBackend: ReadBackend {
     /// # Returns
     ///
     /// The result of the write.
-    fn write_bytes(&self, tpe: FileType, id: &Id, cacheable: bool, buf: Bytes) -> RusticResult<()>;
+    fn write_bytes(
+        &self,
+        tpe: FileType,
+        id: &Id,
+        cacheable: bool,
+        content: BytesList,
+    ) -> RusticResult<()>;
 
     /// Removes the given file.
     ///
@@ -698,7 +770,7 @@ pub trait WriteBackend: ReadBackend {
 mock! {
     pub(crate) Backend {}
 
-    impl ReadBackend for Backend {
+    impl ReadBackend for Backend{
         fn location(&self) -> String;
         fn list_with_size(&self, tpe: FileType) -> RusticResult<Vec<(Id, u32)>>;
         fn read_full(&self, tpe: FileType, id: &Id) -> RusticResult<Bytes>;
@@ -710,12 +782,12 @@ mock! {
             offset: u32,
             length: u32,
         ) -> RusticResult<Bytes>;
-        fn warmup_path(&self, tpe: FileType, id: &Id) -> String;
+    fn warmup_path(&self, tpe: FileType, id: &Id) -> String;
     }
 
     impl WriteBackend for Backend {
         fn create(&self) -> RusticResult<()>;
-        fn write_bytes(&self, tpe: FileType, id: &Id, cacheable: bool, buf: Bytes) -> RusticResult<()>;
+        fn write_bytes(&self, tpe: FileType, id: &Id, cacheable: bool, content: BytesList) -> RusticResult<()>;
         fn remove(&self, tpe: FileType, id: &Id, cacheable: bool) -> RusticResult<()>;
     }
 }
@@ -724,8 +796,14 @@ impl WriteBackend for Arc<dyn WriteBackend> {
     fn create(&self) -> RusticResult<()> {
         self.deref().create()
     }
-    fn write_bytes(&self, tpe: FileType, id: &Id, cacheable: bool, buf: Bytes) -> RusticResult<()> {
-        self.deref().write_bytes(tpe, id, cacheable, buf)
+    fn write_bytes(
+        &self,
+        tpe: FileType,
+        id: &Id,
+        cacheable: bool,
+        content: BytesList,
+    ) -> RusticResult<()> {
+        self.deref().write_bytes(tpe, id, cacheable, content)
     }
     fn remove(&self, tpe: FileType, id: &Id, cacheable: bool) -> RusticResult<()> {
         self.deref().remove(tpe, id, cacheable)
@@ -768,7 +846,7 @@ impl ReadBackend for Arc<dyn WriteBackend> {
     }
 }
 
-impl Debug for dyn WriteBackend {
+impl std::fmt::Debug for dyn WriteBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "WriteBackend{{{}}}", self.location())
     }

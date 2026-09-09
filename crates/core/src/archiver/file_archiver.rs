@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use crate::{
     ReadHandle, ReadSource,
     archiver::{
@@ -21,6 +20,7 @@ use crate::{
     progress::Progress,
     repofile::configfile::ConfigFile,
 };
+use std::path::PathBuf;
 
 /// The `FileArchiver` is responsible for archiving files.
 /// It will read the file, chunk it, and write the chunks to the backend.
@@ -178,6 +178,7 @@ impl<'a, BE: DecryptWriteBackend, I: ReadGlobalIndex, R: ReadSource> FileArchive
             let chunk = chunk?;
             let id = hash(&chunk);
             let size = chunk.len() as u64;
+
             if !self.index.has_data(&DataId::from(id)) {
                 self.data_packer.add(chunk.into(), BlobId::from(id))?;
             }

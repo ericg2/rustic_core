@@ -239,6 +239,7 @@ impl Repository<()> {
     ) -> RusticResult<Self> {
         let mut be = backends.repository();
         let be_hot = backends.repo_hot();
+
         if let Some(warm_up) = &opts.warm_up_command {
             let _ = warm_up.uses_plural_placeholders()?;
 
@@ -1705,7 +1706,7 @@ impl<S: IndexedIds> Repository<S> {
         paths: PathList,
         token: CancelToken,
     ) -> RusticResult<SnapshotFile> {
-        commands::backup::backup(self, opts, src, snap, &*paths.0, token)
+        commands::backup::backup(self, opts, src, snap, &*paths.paths(), token)
     }
 
     /// Run a backup of `source` using the given options.
@@ -1715,7 +1716,7 @@ impl<S: IndexedIds> Repository<S> {
     /// # Arguments
     ///
     /// * `opts` - The options to use
-    /// * `source` - The source to backup
+    /// * `source` - The source to back up
     /// * `snap` - The snapshot to modify and save
     ///
     /// # Errors

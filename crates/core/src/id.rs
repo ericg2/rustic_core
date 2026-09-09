@@ -93,7 +93,7 @@ impl FromStr for Id {
                 "Failed to decode hex string `{value}` into Id. The value must be a valid hexadecimal string.",
                 err
             )
-            .attach_context("value", s)
+                .attach_context("value", s)
         })?;
 
         Ok(id)

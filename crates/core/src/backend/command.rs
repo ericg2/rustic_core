@@ -5,7 +5,7 @@ use bytes::Bytes;
 use log::{debug, warn};
 use typed_path::UnixPathBuf;
 use crate::{CommandInput, ErrorKind, FileType, Id, ReadBackend, RepositoryOptions, RusticError, RusticResult, WriteBackend};
-
+use crate::backend::BytesList;
 
 /// Compute the on-disk (or on-backend) path for a given file type / id,
 /// following rustic's standard repository layout.
@@ -166,7 +166,7 @@ impl<B: WriteBackend> WriteBackend for CommandBackend<B> {
         self.be.create()
     }
 
-    fn write_bytes(&self, tpe: FileType, id: &Id, cacheable: bool, buf: Bytes) -> RusticResult<()> {
+    fn write_bytes(&self, tpe: FileType, id: &Id, cacheable: bool, buf: BytesList) -> RusticResult<()> {
         self.be.write_bytes(tpe, id, cacheable, buf)?;
 
         if let Some(command) = &self.config.post_create_command {

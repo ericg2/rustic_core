@@ -98,6 +98,7 @@ filetime = "0.2.29"
 nix = { version = "0.31.1", default-features = false, features = ["user", "fs"] }
 cached = "1.1.0"
 dashmap = "6"
+futures-util = "0.3.34"
 
 
 [target.'cfg(not(windows))'.dependencies]

@@ -3,6 +3,15 @@ mod modification;
 
 pub use modification::SnapshotModification;
 
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+    fmt::{self, Display},
+    ops::Index,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
+
 use derive_setters::Setters;
 use dunce::canonicalize;
 use gethostname::gethostname;
@@ -12,14 +21,6 @@ use log::{info, warn};
 use path_dedot::ParseDot;
 use serde::{Deserialize, Serialize};
 use serde_with::{DisplayFromStr, serde_as, skip_serializing_none};
-use std::{
-    cmp::Ordering,
-    collections::{BTreeMap, BTreeSet},
-    fmt::{self, Display},
-    ops::Index,
-    path::{Path, PathBuf},
-    str::FromStr,
-};
 
 #[cfg(feature = "clap")]
 use clap::ValueHint;
@@ -45,8 +46,8 @@ pub enum SnapshotFileErrorKind {
     ValueNotAllowed(String),
     /// removing dots from paths failed: `{0:?}`
     RemovingDotsFromPathFailed(std::io::Error),
-    /// canonicalizing path failed: `{0:?}`
-    CanonicalizingPathFailed(std::io::Error),
+    /// canonicalizing path `{0:?}` failed: `{1:?}`
+    CanonicalizingPathFailed(PathBuf, std::io::Error),
 }
 
 pub(crate) type SnapshotFileResult<T> = Result<T, SnapshotFileErrorKind>;
@@ -90,8 +91,7 @@ pub struct SnapshotOptions {
     /// Add description to snapshot from file
     #[cfg_attr(
         feature = "clap",
-        clap(long, value_name = "FILE", conflicts_with = "description", value_hint = ValueHint::FilePath
-        )
+        clap(long, value_name = "FILE", conflicts_with = "description", value_hint = ValueHint::FilePath)
     )]
     #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub description_from: Option<PathBuf>,
@@ -145,7 +145,7 @@ impl SnapshotOptions {
                 "Failed to create string list from tag `{tag}`. The value must be a valid unicode string.",
                 err,
             )
-                .attach_context("tag", tag)
+            .attach_context("tag", tag)
         })?);
         Ok(self)
     }
@@ -247,6 +247,18 @@ pub struct SnapshotSummary {
 
     /// Total duration that the rustic command ran in seconds
     pub total_duration: f64,
+
+    /// Number of source files/directories that could not be read during this backup run.
+    ///
+    /// Serialized only when non-zero so existing restic/rustic snapshots stay unchanged.
+    #[serde(default, skip_serializing_if = "u64_is_zero")]
+    pub error_count: u64,
+}
+
+// serde `skip_serializing_if` always passes a reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+const fn u64_is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 impl Default for SnapshotSummary {
@@ -275,6 +287,7 @@ impl Default for SnapshotSummary {
             backup_end: Zoned::now(),
             backup_duration: Default::default(),
             total_duration: Default::default(),
+            error_count: Default::default(),
         }
     }
 }
@@ -440,9 +453,9 @@ impl FromStr for SnapshotRequest {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let err = || {
             RusticError::new(
-                ErrorKind::InvalidInput,
-                "Invalid snapshot identifier \"{input}\". Expected either a snapshot id: \"01a2b3c4\" or \"latest\" or \"latest~N\" (N >= 0).",
-            )
+                    ErrorKind::InvalidInput,
+                    "Invalid snapshot identifier \"{input}\". Expected either a snapshot id: \"01a2b3c4\" or \"latest\" or \"latest~N\" (N >= 0).",
+                )
                 .attach_context("input", s)
         };
 
@@ -549,7 +562,7 @@ impl SnapshotFile {
                         ErrorKind::InvalidInput,
                         "Failed to convert hostname `{hostname}` to string. The value must be a valid unicode string.",
                     )
-                        .attach_context("hostname", hostname.to_string_lossy().to_string())
+                    .attach_context("hostname", hostname.to_string_lossy().to_string())
                 })?
                 .to_string()
         };
@@ -593,7 +606,7 @@ impl SnapshotFile {
                     "Failed to read description file `{path}`. Please make sure the file exists and is readable.",
                     err,
                 )
-                    .attach_context("path", path.to_string_lossy().to_string())
+                .attach_context("path", path.to_string_lossy().to_string())
             })?);
         }
 
@@ -1052,22 +1065,6 @@ impl FromStr for StringList {
     }
 }
 
-impl<K, V, I> From<I> for StringList
-where
-    I: IntoIterator<Item = (K, V)>,
-    K: Into<String>,
-    V: Into<String>,
-{
-    fn from(value: I) -> Self {
-        Self(
-            value
-                .into_iter()
-                .map(|(k, v)| format!("{},{}", k.into(), v.into()))
-                .collect(),
-        )
-    }
-}
-
 impl Display for StringList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0.iter().join(","))?;
@@ -1195,61 +1192,9 @@ impl<'str> IntoIterator for &'str StringList {
     }
 }
 
-pub trait PathLister {
-    fn get_paths(&self) -> PathList;
-}
-
-impl<P: AsRef<Path>> PathLister for P {
-    fn get_paths(&self) -> PathList {
-        PathList(vec![self.as_ref().to_path_buf()])
-    }
-}
-
-impl PathLister for PathList {
-    fn get_paths(&self) -> PathList {
-        self.clone()
-    }
-}
-
 /// `PathList` is a rustic-internal list of `PathBuf`s. It is used in the [`crate::Repository::backup`] command.
 #[derive(Default, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-pub struct PathList(pub(crate) Vec<PathBuf>);
-
-impl From<PathBuf> for PathList {
-    fn from(value: PathBuf) -> Self {
-        PathList(vec![value])
-    }
-}
-
-impl From<&PathBuf> for PathList {
-    fn from(value: &PathBuf) -> Self {
-        PathList(vec![value.to_path_buf()])
-    }
-}
-
-impl From<&PathList> for PathList {
-    fn from(value: &PathList) -> Self {
-        value.clone()
-    }
-}
-
-impl From<&Path> for PathList {
-    fn from(value: &Path) -> Self {
-        PathList(vec![value.to_path_buf()])
-    }
-}
-
-impl From<&str> for PathList {
-    fn from(value: &str) -> Self {
-        PathList(vec![PathBuf::from(value)])
-    }
-}
-
-impl From<String> for PathList {
-    fn from(value: String) -> Self {
-        PathList(vec![PathBuf::from(value)])
-    }
-}
+pub struct PathList(Vec<PathBuf>);
 
 impl Display for PathList {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1323,30 +1268,23 @@ impl PathList {
             self.0 = self
                 .0
                 .into_iter()
-                .map(|p| canonicalize(p).map_err(SnapshotFileErrorKind::CanonicalizingPathFailed))
+                .map(|p| {
+                    canonicalize(&p)
+                        .map_err(|err| SnapshotFileErrorKind::CanonicalizingPathFailed(p, err))
+                })
                 .collect::<Result<_, _>>()?;
         }
         Ok(self.merge())
     }
 
-    /// Sort paths and filters out subpaths of already existing paths.
+    /// Merge paths: Sort and remove duplicates
     #[must_use]
     pub fn merge(self) -> Self {
         let mut paths = self.0;
         // sort paths
         paths.sort_unstable();
-
-        let mut root_path = None;
-
-        // filter out subpaths
-        paths.retain(|path| match &root_path {
-            Some(root_path) if path.starts_with(root_path) => false,
-            _ => {
-                root_path = Some(path.clone());
-                true
-            }
-        });
-
+        // remove duplicates
+        paths.dedup();
         Self(paths)
     }
 }
@@ -1435,6 +1373,25 @@ mod tests {
         let path_list = PathList::from_iter(input);
         let result = path_list.to_string();
         assert_eq!(expected, &result);
+    }
+
+    #[test]
+    fn path_list_sanitize_error_includes_path() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let missing_path = tempdir.path().join("missing");
+
+        let err = PathList::from_iter([missing_path.clone()])
+            .sanitize()
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains(&missing_path.display().to_string())
+        );
+        assert!(matches!(
+            err,
+            SnapshotFileErrorKind::CanonicalizingPathFailed(path, _) if path == missing_path
+        ));
     }
 
     fn fake_snapshot_file_with_id_time(
@@ -1655,5 +1612,25 @@ mod tests {
         .unwrap();
         let ids: Vec<_> = snaps.iter().map(|sn| *sn.id).collect();
         assert_eq!(ids, vec![id3, id1, id3]);
+    }
+
+    #[test]
+    fn error_count_omitted_from_json_when_zero() {
+        let summary = SnapshotSummary::default();
+        let json = serde_json::to_value(&summary).unwrap();
+        assert!(json.get("error_count").is_none());
+    }
+
+    #[test]
+    fn error_count_serialized_when_nonzero() {
+        let summary = SnapshotSummary {
+            error_count: 3,
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&summary).unwrap();
+        assert_eq!(json["error_count"], 3);
+
+        let decoded: SnapshotSummary = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.error_count, 3);
     }
 }
