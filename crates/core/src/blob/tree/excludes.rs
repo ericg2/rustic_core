@@ -11,7 +11,6 @@ use crate::{ErrorKind, RusticError, RusticResult};
 #[derive(Clone, Debug, Default, PartialEq, Eq, Setters, Serialize, Deserialize)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 #[setters(into)]
-#[non_exhaustive]
 /// Options for including/excluding based on globs
 pub struct Excludes {
     /// Glob pattern to exclude/include (can be specified multiple times)
