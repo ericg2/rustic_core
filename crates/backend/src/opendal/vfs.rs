@@ -21,7 +21,7 @@ use opendal::raw::oio::Entry;
 use opendal::raw::*;
 use opendal::{
     Buffer, Builder, Capability, Configurator, EntryMode, Error, ErrorKind, Metadata,
-    OperationContext,
+    MetadataBuilder, OperationContext,
 };
 use rustic_core::vfs::{IdenticalSnapshot, Latest, OpenFile, Vfs};
 use rustic_core::{
@@ -481,6 +481,7 @@ impl Service for VfsBackend {
     type Lister = VfsLister;
     type Deleter = ();
     type Copier = ();
+    type Composer = ();
 
     fn info(&self) -> ServiceInfo {
         ServiceInfo::new("rustic", "/", "rustic")
@@ -584,7 +585,6 @@ impl Service for VfsBackend {
         _from: &str,
         _to: &str,
         _args: OpCopy,
-        _opts: OpCopier,
     ) -> opendal::Result<Self::Copier> {
         Err(unsupported("copy"))
     }
@@ -620,25 +620,25 @@ impl Service for VfsBackend {
 /// first via `TryFrom<SystemTime>`, which works regardless of whether rustic's
 /// `mtime` is a `chrono::DateTime<_>` or `time::OffsetDateTime` under the hood.
 fn meta_from_node(n: &Node) -> Metadata {
-    let mode = if n.is_dir() {
-        EntryMode::DIR
+    let mut builder;
+    if n.is_dir() {
+        builder = MetadataBuilder::dir();
     } else {
-        EntryMode::FILE
-    };
+        builder = MetadataBuilder::file(n.meta.size);
+    }
 
-    let meta = Metadata::new(mode).with_content_length(n.meta.size);
+    // 9-9-26: Set the metadata to prevent UNIX errors.
+    builder.last_modified(
+        n.meta
+            .mtime
+            .and_then(|mtime| Timestamp::try_from(SystemTime::from(mtime)).ok())
+            .unwrap_or_else(|| {
+                Timestamp::new(0, 0).expect("Unix epoch is a valid OpenDAL timestamp")
+            }),
+    );
 
-    let timestamp = n
-        .meta
-        .mtime
-        .and_then(|mtime| Timestamp::try_from(SystemTime::from(mtime)).ok())
-        .unwrap_or_else(|| {
-            Timestamp::new(0, 0).expect("Unix epoch is a valid OpenDAL timestamp")
-        });
-
-    meta.with_last_modified(timestamp)
+    builder.build()
 }
-
 
 /// Normalize a path string for VFS lookup.
 ///
