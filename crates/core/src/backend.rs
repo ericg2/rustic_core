@@ -108,7 +108,7 @@ pub struct File {
 impl File {
     /// # Returns
     /// This [`File`] as converted to a [`Node`] type.
-    fn node(&self) -> Node {
+    pub fn node(&self) -> Node {
         Node::new_node(
             OsStr::new(&self.name),
             self.node_type.clone(),
