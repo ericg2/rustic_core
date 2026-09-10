@@ -3,7 +3,7 @@ use opendal::blocking::{Operator, StdReader, StdWriter};
 use opendal::layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer};
 use opendal::options::{DeleteOptions, ListOptions, WriteOptions};
 use rayon::prelude::ParallelIterator;
-use std::io::{self, Read, Seek, Write};
+use std::io::{self, BufWriter, Read, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use tokio::runtime::Runtime;
@@ -13,7 +13,11 @@ use crate::BackendBuilder;
 use crate::opendal::config::{OpenDALConfig, Retry, Throttle};
 use crate::opendal::log::OpenLogLayer;
 use crate::repo::RepoAdapter;
-use rustic_core::{BytesList, ErrorKind, FileLister, FileType, Id, Metadata, Node, NodeType, ReadHandle, ReadSource, ReadSourceConfig, RepositoryBackends, RusticError, RusticResult, WriteHandle, WriteSource};
+use rustic_core::{
+    BytesList, ErrorKind, FileLister, FileType, Id, Metadata, Node, NodeType, ReadHandle,
+    ReadSource, ReadSourceConfig, RepositoryBackends, RusticError, RusticResult, WriteHandle,
+    WriteSource,
+};
 
 mod constants {
     /// Default number of retries
@@ -161,12 +165,12 @@ impl BackendBuilder for OpenDALSource {
     }
 }
 
-struct OpenDALWrite(StdWriter);
+struct OpenDALWrite(BufWriter<StdWriter>);
 
 impl WriteHandle for OpenDALWrite {
     fn close(&mut self) -> io::Result<()> {
         self.0.flush()?;
-        self.0.close()?;
+        self.0.get_mut().close()?;
         Ok(())
     }
 }
@@ -338,7 +342,10 @@ impl WriteSource for OpenDALSource {
                 },
             )
             .and_then(|r| Ok(r.into_std_write()))?;
-        Ok(Box::new(OpenDALWrite(handle)))
+        Ok(Box::new(OpenDALWrite(BufWriter::with_capacity(
+            4 * 1024 * 1024,
+            handle,
+        ))))
     }
 
     fn write_all(&self, path: &Path, bytes: BytesList) -> io::Result<()> {
