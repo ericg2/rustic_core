@@ -77,9 +77,10 @@ impl OpenDALSource {
                     err,
                 )
                     .attach_context("scheme", scheme.to_string())
-            })?
-            .layer(RetryLayer::new().with_max_times(max_retries).with_jitter());
+            })?;
+            //.layer(RetryLayer::new().with_max_times(max_retries).with_jitter());
 
+        /*
         if let Some(Throttle { bandwidth, burst }) = throttle {
             operator = operator.layer(ThrottleLayer::new(bandwidth, burst));
         }
@@ -87,6 +88,7 @@ impl OpenDALSource {
         if let Some(connections) = connections {
             operator = operator.layer(ConcurrentLimitLayer::new(connections));
         }
+         */
 
         let _guard = runtime().enter();
         let op = Operator::new(operator.layer(LoggingLayer::new(OpenLogLayer))).map_err(|err| {
