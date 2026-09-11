@@ -237,9 +237,7 @@ impl ReadHandle for OpenDALRead {
 
 impl Read for OpenDALRead {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        trace!("Reading {} length...", buf.len());
         let ret = self.0.read(buf)?;
-        trace!("Read finished");
         Ok(ret)
     }
 }
