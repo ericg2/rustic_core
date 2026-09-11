@@ -150,7 +150,7 @@ pub struct RepositoryOptions {
     /// Post delete command input.
     #[cfg_attr(
         feature = "clap",
-        clap(long, global = true, conflicts_with = "post_delete",)
+        clap(long, global = true)
     )]
     #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub post_delete_command: Option<String>,
@@ -158,7 +158,7 @@ pub struct RepositoryOptions {
     /// Post create command input.
     #[cfg_attr(
         feature = "clap",
-        clap(long, global = true, conflicts_with = "post_create",)
+        clap(long, global = true)
     )]
     #[cfg_attr(feature = "merge", merge(strategy = conflate::option::overwrite_none))]
     pub post_create_command: Option<String>,

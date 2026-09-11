@@ -218,6 +218,7 @@ impl ReadSource for OpenDALSource {
         let handle = self.op.reader(&path)?.into_std_read(..)?;
         Ok(Box::new(OpenDALRead(handle)))
     }
+
     fn readdir(
         &self,
         path: &Path,
