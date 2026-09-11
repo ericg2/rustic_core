@@ -1,8 +1,13 @@
-use opendal::Buffer;
+use log::{trace, warn};
 use opendal::blocking::{Operator, StdReader, StdWriter};
-use opendal::layers::{ConcurrentLimitLayer, LoggingLayer, RetryLayer, ThrottleLayer};
+use opendal::layers::{
+    ConcurrentLimitLayer, LoggingLayer, RetryEvent, RetryInterceptor, RetryLayer, ThrottleLayer,
+};
 use opendal::options::{DeleteOptions, ListOptions, WriteOptions};
+use opendal::{Buffer, HttpTransporter, OperationContext};
+use opendal_http_transport_reqwest::ReqwestTransport;
 use rayon::prelude::ParallelIterator;
+use std::collections::BTreeMap;
 use std::io::{self, BufWriter, Read, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
@@ -13,6 +18,7 @@ use crate::BackendBuilder;
 use crate::opendal::config::{OpenDALConfig, Retry, Throttle};
 use crate::opendal::log::OpenLogLayer;
 use crate::repo::RepoAdapter;
+use crate::reqwest::reqwest_client;
 use rustic_core::{
     BytesList, ErrorKind, FileLister, FileType, Id, Metadata, Node, NodeType, ReadHandle,
     ReadSource, ReadSourceConfig, RepositoryBackends, RusticError, RusticResult, WriteHandle,
@@ -69,6 +75,17 @@ impl OpenDALSource {
             )
         })?;
 
+        let client = reqwest_client(
+            &config
+                .options
+                .clone()
+                .into_iter()
+                .collect::<BTreeMap<_, _>>(),
+        )?;
+
+        let http_transport = HttpTransporter::new(ReqwestTransport::new(client));
+        let operation_context = OperationContext::new().with_http_transport(http_transport);
+
         let mut operator = opendal::Operator::via_iter(scheme, config.options.clone())
             .map_err(|err| {
                 RusticError::with_source(
@@ -77,10 +94,14 @@ impl OpenDALSource {
                     err,
                 )
                     .attach_context("scheme", scheme.to_string())
-            })?;
-            //.layer(RetryLayer::new().with_max_times(max_retries).with_jitter());
+            })?.with_context(operation_context)
+            .layer(
+                RetryLayer::new()
+                    .with_max_times(max_retries)
+                    .with_jitter()
+                    .with_notify(CompactRetryInterceptor),
+            );
 
-        /*
         if let Some(Throttle { bandwidth, burst }) = throttle {
             operator = operator.layer(ThrottleLayer::new(bandwidth, burst));
         }
@@ -88,7 +109,6 @@ impl OpenDALSource {
         if let Some(connections) = connections {
             operator = operator.layer(ConcurrentLimitLayer::new(connections));
         }
-         */
 
         let _guard = runtime().enter();
         let op = Operator::new(operator.layer(LoggingLayer::new(OpenLogLayer))).map_err(|err| {
@@ -167,6 +187,26 @@ impl BackendBuilder for OpenDALSource {
     }
 }
 
+/// Log `OpenDAL` retries as a single line using `Display`, not `Debug`.
+///
+/// `OpenDAL`'s default interceptor formats the error with `{:?}`, which dumps
+/// the full context/source tree across many lines and fights progress/TUI
+/// output.
+#[derive(Clone, Copy, Debug)]
+struct CompactRetryInterceptor;
+
+impl RetryInterceptor for CompactRetryInterceptor {
+    fn intercept(&self, event: RetryEvent<'_>) {
+        warn!(
+            "Error {err} at {duration:?}, retrying {op:?} (attempt {attempt})",
+            err = event.err,
+            duration = event.retry_after,
+            op = event.op,
+            attempt = event.attempt,
+        );
+    }
+}
+
 struct OpenDALWrite(BufWriter<StdWriter>);
 
 impl WriteHandle for OpenDALWrite {
@@ -197,7 +237,10 @@ impl ReadHandle for OpenDALRead {
 
 impl Read for OpenDALRead {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.read(buf)
+        trace!("Reading {} length...", buf.len());
+        let ret = self.0.read(buf)?;
+        trace!("Read finished");
+        Ok(ret)
     }
 }
 

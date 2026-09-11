@@ -10,12 +10,12 @@ use reqwest::{
 
 use rustic_core::{ErrorKind, RusticError, RusticResult};
 
-pub(super) mod constants {
+pub(crate) mod constants {
     use std::time::Duration;
 
     /// Default timeout for the client
     /// This is set to 10 minutes
-    pub(super) const DEFAULT_TIMEOUT: Duration = Duration::from_mins(10);
+    pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_mins(10);
 }
 
 fn read_file_contents(log_name: &str, path: &str) -> RusticResult<Vec<u8>> {

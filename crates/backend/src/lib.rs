@@ -78,6 +78,8 @@ mod util;
 mod repo;
 mod tests;
 
+mod reqwest;
+
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 // rustic_backend Public API
