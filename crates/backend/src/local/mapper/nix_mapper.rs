@@ -1,7 +1,5 @@
 use {
-    cached::macros::cached,
-    log::warn,
-    nix::unistd::{Gid, Group, Uid, User},
+    cached::proc_macro::cached, log::warn, nix::unistd::{Gid, Group, Uid, User},
 };
 
 const MODE_PERM: u32 = 0o777; // permission bits

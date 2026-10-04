@@ -109,6 +109,10 @@ opendal-http-transport-reqwest = { version = "0.59", optional = true }
 # opendal backend
 # - sftp is not supported on windows, see https://github.com/apache/incubator-opendal/issues/2963
 opendal = { version = "0.59", features = ["blocking", "services-b2", "services-ftp", "services-sftp", "services-swift", "services-azblob", "services-azdls", "services-cos", "services-fs", "services-dropbox", "services-gdrive", "services-gcs", "services-ghac", "services-http", "services-ipmfs", "services-memory", "services-obs", "services-onedrive", "services-oss", "services-pcloud", "services-s3", "services-webdav", "services-webhdfs", "services-azfile", "layers-throttle", "services-yandex-disk"], optional = true }
+nix = { version = "0.31", features = ["fs", "user"] }
+cached = { version = "0.55", features = ["proc_macro"] }
+filetime = "0.2"
+
 
 [target.'cfg(windows)'.dependencies]
 # opendal backend
@@ -117,6 +121,7 @@ opendal = { version = "0.59", features = ["blocking", "services-b2", "services-f
 [target.'cfg(not(any(windows, target_os="openbsd")))'.dependencies]
 # for local source/destination
 xattr = "1"
+
 
 [dev-dependencies]
 anyhow = { workspace = true }

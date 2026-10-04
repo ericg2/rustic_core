@@ -6,6 +6,8 @@ use std::num::TryFromIntError;
 use std::path::Path;
 
 use jiff::Timestamp;
+#[cfg(not(windows))]
+use nix::errno::Errno;
 use rustic_core::NodeType;
 
 use std::path::PathBuf;
@@ -165,7 +167,7 @@ pub(crate) type LocalDestinationResult<T> = Result<T, LocalDestinationErrorKind>
 #[cfg(not(windows))]
 mod utils {
     use super::{
-        BlockdevOption, LocalDestinationErrorKind, LocalDestinationResult, NodeType, nix_mapper,
+        LocalDestinationErrorKind, LocalDestinationResult, NodeType, nix_mapper,
     };
     use cached::proc_macro::cached;
     use ignore::WalkState;
