@@ -878,7 +878,7 @@ impl VfsLister {
             let mut seen = HashSet::with_capacity(entries.len());
             let entries = entries
                 .into_iter()
-                .filter(|node| seen.insert(node.name.to_string_lossy().into_owned()))
+                .filter(|node| seen.insert(node.name.clone()))
                 .collect::<Vec<_>>();
             self.nodes = Some(entries.into_iter());
         }
