@@ -51,6 +51,15 @@ struct PendingDir {
     depth: usize,
 }
 
+/// The remaining children of a directory that is currently being walked.
+#[derive(Debug)]
+struct Frame {
+    /// Directory the children belong to (gives ancestors/device/depth).
+    dir: PendingDir,
+    /// Children not yet yielded, sorted by path.
+    children: VecDeque<File>,
+}
+
 /// Builder for [`ListAdapter`].
 ///
 /// Holds every knob that can be configured before a walk starts —
@@ -236,7 +245,8 @@ impl<'a, R: ReadSource> ListBuilder<'a, R> {
             gitignore,
             dirs,
             visited_dirs,
-            current_batch: VecDeque::new(),
+            stack: Vec::new(),
+            descend: None,
             recursive: self.recursive,
         })
     }
@@ -271,8 +281,17 @@ pub struct ListAdapter<'a, R: ReadSource> {
     excludes: Option<ExcludeFilter>,
     gitignore: GitignoreLayers<'a, R>,
 
+    /// Roots still waiting to be walked. Each root is walked completely
+    /// (depth-first) before the next one is started.
     dirs: VecDeque<PendingDir>,
-    current_batch: VecDeque<File>,
+    /// Stack of directories currently being walked. The top frame holds the
+    /// not-yet-yielded children of the innermost open directory.
+    stack: Vec<Frame>,
+    /// A directory that was just yielded and whose children must be listed
+    /// and walked *before* anything else is yielded. This is what keeps the
+    /// output in depth-first pre-order (a directory is immediately followed
+    /// by its contents), which `TreeIterator` in the archiver requires.
+    descend: Option<PendingDir>,
     /// Guards against symlink cycles when the backend reports a
     /// symlinked directory as a plain directory, and against revisiting
     /// a directory reachable from more than one root.
@@ -427,64 +446,77 @@ impl<'a, R: ReadSource> Iterator for ListAdapter<'a, R> {
     /// or `None` when the walk is complete.
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if let Some(file) = self.current_batch.pop_front() {
-                return Some(Ok(file));
+            // A directory was yielded on the previous call: open it now so its
+            // contents come out directly after it (depth-first pre-order).
+            if let Some(dir) = self.descend.take() {
+                match self.list_dir_children(&dir.path, dir.device_id) {
+                    Ok(children) => self.stack.push(Frame {
+                        dir,
+                        children: children.into(),
+                    }),
+                    Err(err) => return Some(Err(err)),
+                }
             }
 
-            let pending = self.dirs.pop_front()?;
-            let children = match self.list_dir_children(&pending.path, pending.device_id) {
-                Ok(c) => c,
-                Err(err) => return Some(Err(err)),
-            };
+            // Nothing open: start the next root.
+            if self.stack.is_empty() {
+                let dir = self.dirs.pop_front()?;
+                self.descend = Some(dir);
+                continue;
+            }
 
-            for child in children {
-                if let Some(ex) = &self.excludes {
-                    if !ex.is_ok(&child) {
-                        continue;
-                    }
-                }
-                if !self
-                    .gitignore
-                    .is_ok(child.path(), child.is_dir(), &pending.gitignore_ancestors)
-                {
+            let frame = self.stack.last_mut().expect("stack checked non-empty");
+            let Some(child) = frame.children.pop_front() else {
+                // Directory finished; resume its parent.
+                _ = self.stack.pop();
+                continue;
+            };
+            let parent_ancestors = frame.dir.gitignore_ancestors.clone();
+            let device_id = frame.dir.device_id;
+            let depth = frame.dir.depth;
+
+            if let Some(ex) = &self.excludes {
+                if !ex.is_ok(&child) {
                     continue;
                 }
+            }
+            if !self
+                .gitignore
+                .is_ok(child.path(), child.is_dir(), &parent_ancestors)
+            {
+                continue;
+            }
 
-                if child.is_dir() && self.recursive {
-                    if pending.depth + 1 > MAX_DEPTH {
-                        return Some(Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!(
-                                "max walk depth ({MAX_DEPTH}) exceeded at `{}`",
-                                child.path().display()
-                            ),
-                        )));
-                    }
-                    if !self.visited_dirs.insert(child.path().to_path_buf()) {
-                        // Already seen this path — symlink cycle, duplicate
-                        // backend entry, or overlap between two configured
-                        // roots; skip descending but still yield it.
-                        self.current_batch.push_back(child);
-                        continue;
-                    }
-
-                    let mut ancestors = pending.gitignore_ancestors.clone();
+            if child.is_dir() && self.recursive {
+                if depth + 1 > MAX_DEPTH {
+                    return Some(Err(io::Error::new(
+                        io::ErrorKind::Other,
+                        format!(
+                            "max walk depth ({MAX_DEPTH}) exceeded at `{}`",
+                            child.path().display()
+                        ),
+                    )));
+                }
+                // Already seen this path (symlink cycle, duplicate backend
+                // entry, or overlapping roots): yield it but don't descend.
+                if self.visited_dirs.insert(child.path().to_path_buf()) {
+                    let mut ancestors = parent_ancestors;
                     if self.gitignore.enabled() {
                         if let Err(err) = self.gitignore.load_dir(child.path()) {
                             return Some(Err(err));
                         }
                         ancestors.push(child.path().to_path_buf());
                     }
-                    self.dirs.push_back(PendingDir {
+                    self.descend = Some(PendingDir {
                         path: child.path().to_path_buf(),
                         gitignore_ancestors: ancestors,
-                        device_id: pending.device_id,
-                        depth: pending.depth + 1,
+                        device_id,
+                        depth: depth + 1,
                     });
                 }
-
-                self.current_batch.push_back(child);
             }
+
+            return Some(Ok(child));
         }
     }
 }
