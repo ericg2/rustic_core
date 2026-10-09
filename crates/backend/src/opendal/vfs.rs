@@ -28,6 +28,7 @@ use rustic_core::{
     BackendOptions, Credentials, IndexedFullStatus, Node, Repository, RepositoryOptions,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -871,6 +872,14 @@ impl VfsLister {
                 .map_err(|e| {
                     Error::new(ErrorKind::NotFound, "Directory not found in VFS.").set_source(e)
                 })?;
+            // A VFS listing must contain one entry per child name. Guard here as well
+            // as at callers so every OpenDAL consumer (including SMB) gets a stable
+            // directory listing even if the underlying VFS ever returns repeated nodes.
+            let mut seen = HashSet::with_capacity(entries.len());
+            let entries = entries
+                .into_iter()
+                .filter(|node| seen.insert(node.name.to_string_lossy().into_owned()))
+                .collect::<Vec<_>>();
             self.nodes = Some(entries.into_iter());
         }
 
