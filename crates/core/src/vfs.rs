@@ -3,7 +3,6 @@ mod format;
 use std::{
     collections::BTreeMap,
     ffi::{OsStr, OsString},
-    fmt::Write as _,
     path::{Component, Path, PathBuf},
 };
 
@@ -12,7 +11,6 @@ use runtime_format::FormatArgs;
 use strum::EnumString;
 
 use crate::{
-    ExtendedAttribute,
     blob::{BlobId, DataId, tree::TreeId},
     error::{ErrorKind, RusticError, RusticResult},
     index::ReadIndex,
@@ -20,13 +18,6 @@ use crate::{
     repository::{IndexedFull, Repository},
     vfs::format::FormattedSnapshot,
 };
-
-/// Name of the virtual summary file placed inside every snapshot directory
-const SUMMARY_FILE_NAME: &str = "SUMMARY.txt";
-
-/// Name of the (hidden) extended attribute used to carry the content of virtual files
-/// inside a [`Node`], so `OpenFile::from_node` can serve them without any blobs.
-const INLINE_XATTR: &str = "rustic.vfs.inline";
 
 /// [`VfsErrorKind`] describes the errors that can be returned from the Virtual File System
 #[derive(thiserror::Error, Debug, displaydoc::Display)]
@@ -68,8 +59,6 @@ enum VfsTree {
     Link(OsString),
     /// A repository tree; id of the tree
     RusticTree(TreeId),
-    /// A repository tree with an additional virtual `SUMMARY.txt` in its root
-    Overlay(TreeId, Bytes),
     /// A purely virtual tree containing subtrees
     VirtualTree(BTreeMap<OsString, Self>),
 }
@@ -80,12 +69,9 @@ enum VfsPath<'a> {
     /// Path is the given symlink
     Link(&'a OsString),
     /// Path is within repository, give the tree [`Id`] and remaining path.
-    /// The optional bytes are a virtual summary file to add when listing the tree root.
-    RusticPath(&'a TreeId, PathBuf, Option<&'a Bytes>),
+    RusticPath(&'a TreeId, PathBuf),
     /// Path is the given virtual tree
     VirtualTree(&'a BTreeMap<OsString, VfsTree>),
-    /// Path is a purely virtual file with the given content
-    File(&'a Bytes),
 }
 
 impl VfsTree {
@@ -159,25 +145,7 @@ impl VfsTree {
             match tree {
                 Self::RusticTree(id) => {
                     let path: PathBuf = components.collect();
-                    return Ok(VfsPath::RusticPath(id, path, None));
-                }
-                Self::Overlay(id, summary) => {
-                    let mut peek = components.clone();
-                    return match peek.next() {
-                        // root of the snapshot: list real entries + virtual summary
-                        None => Ok(VfsPath::RusticPath(id, PathBuf::new(), Some(summary))),
-                        // exactly `SUMMARY.txt` directly in the snapshot root
-                        Some(Component::Normal(name))
-                            if name == OsStr::new(SUMMARY_FILE_NAME) && peek.next().is_none() =>
-                        {
-                            Ok(VfsPath::File(summary))
-                        }
-                        // anything else is a normal repository path
-                        _ => {
-                            let path: PathBuf = components.collect();
-                            Ok(VfsPath::RusticPath(id, path, None))
-                        }
-                    };
+                    return Ok(VfsPath::RusticPath(id, path));
                 }
                 Self::VirtualTree(virtual_tree) => match components.next() {
                     Some(Component::Normal(name)) => {
@@ -219,263 +187,6 @@ pub struct Vfs {
     tree: VfsTree,
 }
 
-// ---------------------------------------------------------------------------
-// Virtual file helpers
-// ---------------------------------------------------------------------------
-
-/// Metadata for a virtual in-memory file: correct size plus the content
-/// smuggled in a hidden extended attribute (read back in `OpenFile::from_node`).
-fn virtual_file_meta(content: &Bytes) -> Metadata {
-    Metadata {
-        size: content.len() as u64,
-        extended_attributes: vec![ExtendedAttribute {
-            name: INLINE_XATTR.to_string(),
-            value: Some(content.to_vec()),
-        }],
-        ..Metadata::default()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Summary rendering helpers
-// ---------------------------------------------------------------------------
-
-/// Format an integer with thousands separators: `1234567` -> `1,234,567`
-fn thousands(n: u64) -> String {
-    let s = n.to_string();
-    let mut out = String::with_capacity(s.len() + s.len() / 3);
-    for (i, c) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
-            out.push(',');
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// Format a byte count using binary units: `1536` -> `1.50 KiB`
-#[allow(clippy::cast_precision_loss)]
-fn human_bytes(n: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
-    if n < 1024 {
-        return format!("{n} B");
-    }
-    let mut value = n as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    format!("{value:.2} {}", UNITS[unit])
-}
-
-/// Format a duration in seconds: `3725.0` -> `1h 02m 05s`
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn human_duration(secs: f64) -> String {
-    if !secs.is_finite() || secs < 0.0 {
-        return "-".to_string();
-    }
-    if secs < 60.0 {
-        return format!("{secs:.1}s");
-    }
-    let total = secs.round() as u64;
-    let (h, m, s) = (total / 3600, (total % 3600) / 60, total % 60);
-    if h > 0 {
-        format!("{h}h {m:02}m {s:02}s")
-    } else {
-        format!("{m}m {s:02}s")
-    }
-}
-
-/// Write one aligned `label  value` row
-fn row(out: &mut String, label: &str, value: impl std::fmt::Display) {
-    let _ = writeln!(out, "  {:<13}{value}", format!("{label}:"));
-}
-
-/// Join a list of strings, or `-` if empty
-fn join_or_dash<'a>(items: impl Iterator<Item = &'a String>) -> String {
-    let v: Vec<&str> = items.map(String::as_str).collect();
-    if v.is_empty() {
-        "-".to_string()
-    } else {
-        v.join(", ")
-    }
-}
-
-/// Render a human readable summary of a single snapshot.
-fn render_snapshot_summary(snap: &SnapshotFile) -> String {
-    const WIDTH: usize = 72;
-    let heavy = "═".repeat(WIDTH);
-    let light = "─".repeat(WIDTH);
-    let time_fmt = "%Y-%m-%d %H:%M:%S %Z";
-    let mut out = String::new();
-
-    let id = snap.id.to_string();
-    let short_id: String = id.chars().take(8).collect();
-
-    let _ = writeln!(out, "{heavy}");
-    let _ = writeln!(out, "  SNAPSHOT {short_id}");
-    let _ = writeln!(out, "{heavy}");
-    out.push('\n');
-
-    row(&mut out, "ID", &id);
-    row(&mut out, "Time", snap.time.strftime(time_fmt));
-    row(
-        &mut out,
-        "Host/User",
-        format!(
-            "{} / {} (uid {}, gid {})",
-            if snap.hostname.is_empty() {
-                "-"
-            } else {
-                &snap.hostname
-            },
-            if snap.username.is_empty() {
-                "-"
-            } else {
-                &snap.username
-            },
-            snap.uid,
-            snap.gid
-        ),
-    );
-    row(&mut out, "Paths", join_or_dash(snap.paths.iter()));
-    row(&mut out, "Tags", join_or_dash(snap.tags.iter()));
-    if !snap.label.is_empty() {
-        row(&mut out, "Label", &snap.label);
-    }
-    if let Some(desc) = &snap.description {
-        row(&mut out, "Description", desc);
-    }
-    if let Some(parent) = &snap.parent {
-        row(&mut out, "Parent", parent.to_string());
-    }
-    if let Some(original) = &snap.original {
-        row(&mut out, "Original", original.to_string());
-    }
-    row(&mut out, "Tree", snap.tree.to_string());
-    if !snap.program_version.is_empty() {
-        row(&mut out, "Program", &snap.program_version);
-    }
-    out.push('\n');
-    let _ = writeln!(out, "{light}");
-    out.push('\n');
-
-    if let Some(s) = &snap.summary {
-        if !s.command.is_empty() {
-            row(&mut out, "Command", &s.command);
-        }
-        row(
-            &mut out,
-            "Backup",
-            format!(
-                "{}  →  {}",
-                s.backup_start.strftime(time_fmt),
-                s.backup_end.strftime(time_fmt)
-            ),
-        );
-        row(
-            &mut out,
-            "Duration",
-            format!(
-                "{} backup, {} total",
-                human_duration(s.backup_duration),
-                human_duration(s.total_duration)
-            ),
-        );
-        out.push('\n');
-        row(
-            &mut out,
-            "Files",
-            format!(
-                "{} processed, {}",
-                thousands(s.total_files_processed),
-                human_bytes(s.total_bytes_processed),
-            ),
-        );
-        row(
-            &mut out,
-            "",
-            format!(
-                "{} new, {} changed, {} unmodified",
-                thousands(s.files_new),
-                thousands(s.files_changed),
-                thousands(s.files_unmodified),
-            ),
-        );
-        row(
-            &mut out,
-            "Dirs",
-            format!(
-                "{} processed, {}",
-                thousands(s.total_dirs_processed),
-                human_bytes(s.total_dirsize_processed),
-            ),
-        );
-        row(
-            &mut out,
-            "",
-            format!(
-                "{} new, {} changed, {} unmodified",
-                thousands(s.dirs_new),
-                thousands(s.dirs_changed),
-                thousands(s.dirs_unmodified),
-            ),
-        );
-        out.push('\n');
-        row(
-            &mut out,
-            "Added",
-            format!(
-                "{} (packed: {})",
-                human_bytes(s.data_added),
-                human_bytes(s.data_added_packed)
-            ),
-        );
-        row(
-            &mut out,
-            "  files",
-            format!(
-                "{} (packed: {})",
-                human_bytes(s.data_added_files),
-                human_bytes(s.data_added_files_packed)
-            ),
-        );
-        row(
-            &mut out,
-            "  trees",
-            format!(
-                "{} (packed: {})",
-                human_bytes(s.data_added_trees),
-                human_bytes(s.data_added_trees_packed)
-            ),
-        );
-        row(
-            &mut out,
-            "New blobs",
-            format!(
-                "{} data, {} tree",
-                thousands(s.data_blobs),
-                thousands(s.tree_blobs)
-            ),
-        );
-        if s.error_count > 0 {
-            out.push('\n');
-            row(
-                &mut out,
-                "Errors",
-                format!("{} source(s) could not be read", thousands(s.error_count)),
-            );
-        }
-    } else {
-        row(&mut out, "Stats", "not available for this snapshot");
-    }
-
-    out.push('\n');
-    let _ = writeln!(out, "{heavy}");
-    out
-}
-
 impl Vfs {
     /// Create a new [`Vfs`] from a directory [`Node`].
     ///
@@ -493,8 +204,6 @@ impl Vfs {
     }
 
     /// Create a new [`Vfs`] from a list of snapshots.
-    ///
-    /// Every snapshot directory contains a virtual `SUMMARY.txt` describing that snapshot.
     ///
     /// # Arguments
     ///
@@ -536,19 +245,17 @@ impl Vfs {
                     time_format: time_template,
                 },
             )
-            .to_string();
+                .to_string();
             let path = Path::new(&path);
             let filename = path.file_name().map(OsStr::to_os_string);
             let parent_path = path.parent().map(Path::to_path_buf);
-
-            let summary = Bytes::from(render_snapshot_summary(&snap));
 
             // Save paths for latest entries, if requested
             if matches!(latest_option, Latest::AsLink) {
                 _ = dirs_for_link.insert(parent_path.clone(), filename.clone());
             }
             if matches!(latest_option, Latest::AsDir) {
-                _ = dirs_for_snap.insert(parent_path.clone(), (snap.tree, summary.clone()));
+                _ = dirs_for_snap.insert(parent_path.clone(), snap.tree);
             }
 
             // Create the entry, potentially as symlink if requested
@@ -565,13 +272,13 @@ impl Vfs {
                                     "Failed to add a link `{name}` to root tree at `{path}`",
                                     err,
                                 )
-                                .attach_context("path", path.display().to_string())
-                                .attach_context("name", name.to_string_lossy())
-                                .ask_report()
+                                    .attach_context("path", path.display().to_string())
+                                    .attach_context("name", name.to_string_lossy())
+                                    .ask_report()
                             })?;
                     }
                 } else {
-                    tree.add_tree(path, VfsTree::Overlay(snap.tree, summary))
+                    tree.add_tree(path, VfsTree::RusticTree(snap.tree))
                         .map_err(|err| {
                             RusticError::with_source(
                                 ErrorKind::Vfs,
@@ -612,10 +319,10 @@ impl Vfs {
                 }
             }
             Latest::AsDir => {
-                for (path, (subtree, summary)) in dirs_for_snap {
+                for (path, subtree) in dirs_for_snap {
                     if let Some(mut path) = path {
                         path.push("latest");
-                        tree.add_tree(&path, VfsTree::Overlay(subtree, summary))
+                        tree.add_tree(&path, VfsTree::RusticTree(subtree))
                             .map_err(|err| {
                                 RusticError::with_source(
                                     ErrorKind::Vfs,
@@ -662,10 +369,10 @@ impl Vfs {
                 "Failed to get tree at given path `{path}`",
                 err,
             )
-            .attach_context("path", path.display().to_string())
-            .ask_report()
+                .attach_context("path", path.display().to_string())
+                .ask_report()
         })? {
-            VfsPath::RusticPath(tree_id, path, _) => Ok(repo.node_from_path(*tree_id, &path)?),
+            VfsPath::RusticPath(tree_id, path) => Ok(repo.node_from_path(*tree_id, &path)?),
             VfsPath::VirtualTree(_) => {
                 Ok(Node::new(String::new(), NodeType::Dir, meta, None, None))
             }
@@ -673,13 +380,6 @@ impl Vfs {
                 String::new(),
                 NodeType::from_link(Path::new(target)),
                 meta,
-                None,
-                None,
-            )),
-            VfsPath::File(content) => Ok(Node::new(
-                SUMMARY_FILE_NAME.to_string(),
-                NodeType::File,
-                virtual_file_meta(content),
                 None,
                 None,
             )),
@@ -717,25 +417,14 @@ impl Vfs {
                 "Failed to get tree at given path `{path}`",
                 err,
             )
-            .attach_context("path", path.display().to_string())
-            .ask_report()
+                .attach_context("path", path.display().to_string())
+                .ask_report()
         })? {
-            VfsPath::RusticPath(tree_id, path, summary) => {
+            VfsPath::RusticPath(tree_id, path) => {
                 let node = repo.node_from_path(*tree_id, &path)?;
                 if node.is_dir() {
                     let tree = repo.get_tree(&node.subtree.unwrap())?;
-                    let mut nodes = tree.nodes;
-                    if let Some(content) = summary {
-                        // the virtual summary takes precedence over a real file of the same name
-                        nodes.retain(|n| n.name != SUMMARY_FILE_NAME);
-                        nodes.push(Node::new_node(
-                            OsStr::new(SUMMARY_FILE_NAME),
-                            NodeType::File,
-                            virtual_file_meta(content),
-                        ));
-                        nodes.sort_by(|a, b| a.name.cmp(&b.name));
-                    }
-                    nodes
+                    tree.nodes
                 } else {
                     Vec::new()
                 }
@@ -757,13 +446,6 @@ impl Vfs {
                 )
                     .attach_context("symlink", str.to_string_lossy().to_string()));
             }
-            VfsPath::File(_) => {
-                return Err(RusticError::new(
-                    ErrorKind::Vfs,
-                    "Path `{path}` is a virtual file, not a directory",
-                )
-                .attach_context("path", path.display().to_string()));
-            }
         };
         Ok(result)
     }
@@ -775,15 +457,10 @@ pub struct OpenFile {
     // The list of blobs
     content: Vec<DataId>,
     startpoints: ContentStartpoints,
-    /// In-memory content for purely virtual files (no blobs involved)
-    inline: Option<Bytes>,
 }
 
 impl OpenFile {
     /// Create an `OpenFile` from a file `Node`
-    ///
-    /// Virtual files (carrying their content in a hidden extended attribute) are
-    /// served from memory; everything else is read from repository blobs.
     ///
     /// # Arguments
     ///
@@ -800,21 +477,6 @@ impl OpenFile {
         repo: &Repository<S>,
         node: &Node,
     ) -> RusticResult<Self> {
-        // virtual file?
-        if let Some(data) = node
-            .meta
-            .extended_attributes
-            .iter()
-            .find(|a| a.name == INLINE_XATTR)
-            .and_then(|a| a.value.clone())
-        {
-            return Ok(Self {
-                content: Vec::new(),
-                startpoints: ContentStartpoints(Vec::new()),
-                inline: Some(Bytes::from(data)),
-            });
-        }
-
         let content: Vec<_> = node.content.clone().unwrap_or_default();
 
         let startpoints = ContentStartpoints::from_sizes(content.iter().map(|id| {
@@ -831,7 +493,6 @@ impl OpenFile {
         Ok(Self {
             content,
             startpoints,
-            inline: None,
         })
     }
 
@@ -858,15 +519,6 @@ impl OpenFile {
         offset: usize,
         mut length: usize,
     ) -> RusticResult<Bytes> {
-        // virtual file: serve straight from memory
-        if let Some(data) = &self.inline {
-            if offset >= data.len() {
-                return Ok(Bytes::new());
-            }
-            let end = offset.saturating_add(length).min(data.len());
-            return Ok(data.slice(offset..end));
-        }
-
         let (mut i, mut offset) = self.startpoints.compute_start(offset);
 
         let mut result = BytesMut::with_capacity(length);
@@ -958,14 +610,5 @@ mod tests {
         assert_eq!(offsets.compute_start(5), (0, 5));
         assert_eq!(offsets.compute_start(20), (1, 5));
         assert_eq!(offsets.compute_start(42), (1, 27));
-    }
-
-    #[test]
-    fn human_formatting() {
-        assert_eq!(thousands(1_234_567), "1,234,567");
-        assert_eq!(thousands(12), "12");
-        assert_eq!(human_bytes(512), "512 B");
-        assert_eq!(human_bytes(1536), "1.50 KiB");
-        assert_eq!(human_duration(3725.0), "1h 02m 05s");
     }
 }
