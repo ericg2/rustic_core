@@ -252,6 +252,10 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
 
             if track_size {
                 p.set_length(total_size.load(Ordering::Relaxed));
+                // The source walk has drained, so this is the stable denominator.
+                // Consumers can keep showing byte progress while withholding a
+                // percentage until this explicit final-total marker arrives.
+                p.set_title("backing up... [total finalized]");
             }
 
             Ok(())
