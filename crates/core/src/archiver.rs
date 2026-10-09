@@ -149,13 +149,17 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
         let error_count = Arc::new(AtomicU64::new(0));
 
         scope(|s| -> RusticResult<_> {
-            // filter out errors and handle as_path; lazily grow the
-            // progress bar's length as files are discovered, since src
-            // is single-pass and can't be scanned twice anymore.
+            // Source listing is single-pass, so the exact total is not
+            // available before archival starts. Batch length updates to avoid
+            // making the progress denominator jump for every small file, then
+            // publish the final total once the pipeline has drained.
             let track_size = !no_scan && !p.is_hidden();
-            let mut total_size: u64 = 0;
+            let total_size = Arc::new(AtomicU64::new(0));
+            let scanned_files = Arc::new(AtomicU64::new(0));
 
             let scan_error_count = Arc::clone(&error_count);
+            let scan_total_size = Arc::clone(&total_size);
+            let scan_file_count = Arc::clone(&scanned_files);
             let iter = src.filter_map(move |item| match item {
                 Err(err) => {
                     let err =
@@ -167,8 +171,11 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
 
                 Ok(file) => {
                     if track_size {
-                        total_size += file.size();
-                        p.set_length(total_size);
+                        let total = scan_total_size.fetch_add(file.size(), Ordering::Relaxed) + file.size();
+                        let count = scan_file_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        if count == 1 || count % 32 == 0 || total % (64 * 1024 * 1024) < file.size() {
+                            p.set_length(total);
+                        }
                     }
 
                     let is_dir = file.is_dir();
@@ -242,6 +249,10 @@ impl<'a, BE: DecryptFullBackend, I: ReadGlobalIndex, R: ReadSource> Archiver<'a,
                 token.check()?;
                 self.tree_archiver.add(item)
             })?;
+
+            if track_size {
+                p.set_length(total_size.load(Ordering::Relaxed));
+            }
 
             Ok(())
         })?;
