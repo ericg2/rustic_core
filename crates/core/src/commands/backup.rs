@@ -20,7 +20,7 @@ use path_dedot::ParseDot;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 
-use std::{path::PathBuf};
+use std::path::PathBuf;
 
 use crate::{
     archiver::Archiver,

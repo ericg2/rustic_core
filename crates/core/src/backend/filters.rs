@@ -56,7 +56,9 @@ pub struct FilterOptions {
 #[serde_as]
 #[cfg_attr(feature = "clap", derive(clap::Parser))]
 #[cfg_attr(feature = "merge", derive(conflate::Merge))]
-#[derive(serde::Deserialize, serde::Serialize, Default, Clone, Copy, Debug, Setters)]
+#[derive(
+    serde::Deserialize, serde::Serialize, Default, Clone, Copy, Debug, PartialEq, Eq, Setters,
+)]
 #[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
 #[setters(into)]
 #[non_exhaustive]

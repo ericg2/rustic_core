@@ -176,6 +176,9 @@ fn insta_node_redaction() -> Settings {
     settings.add_dynamic_redaction(".**.atime", handle_option);
     settings.add_dynamic_redaction(".**.ctime", handle_option);
     settings.add_dynamic_redaction(".**.subtree", handle_option);
+    // xattrs (e.g. `security.selinux`) depend on the filesystem the test
+    // fixture is unpacked onto, so never bake their values into snapshots.
+    settings.add_dynamic_redaction(".**.extended_attributes", handle_option);
 
     settings
 }

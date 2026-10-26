@@ -31,6 +31,17 @@ impl StdinSource {
             io::Error::new(io::ErrorKind::InvalidInput, "output path not configured")
         })
     }
+
+    /// Returns whether `path` addresses the configured output file.
+    ///
+    /// The backup pipeline lists sources from their virtual root, which is
+    /// `/`, so the path arriving here may be either the configured output
+    /// path (`stdin`) or that path below the root (`/stdin`).
+    fn is_output(&self, path: &Path) -> io::Result<bool> {
+        let output = self.get_output()?;
+        let relative = path.strip_prefix("/").unwrap_or(path);
+        Ok(relative == output)
+    }
 }
 
 impl ReadSource for StdinSource {
@@ -48,8 +59,7 @@ impl ReadSource for StdinSource {
     /// Calling this more than once for the same source will hand out stdin
     /// again, which is only meaningful the first time it's actually read.
     fn open_read(&self, path: &Path) -> io::Result<Box<dyn ReadHandle>> {
-        let output = self.get_output()?;
-        if path != output {
+        if !self.is_output(path)? {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("{path:?} not found in stdin source"),
@@ -84,8 +94,7 @@ impl ReadSource for StdinSource {
     /// Size/mtime/etc. are left at their defaults since stdin has no
     /// meaningful stat info to report ahead of reading it.
     fn stat(&self, path: &Path) -> io::Result<Option<Metadata>> {
-        let output = self.get_output()?;
-        Ok((path == output).then(Metadata::default))
+        Ok(self.is_output(path)?.then(Metadata::default))
     }
 }
 

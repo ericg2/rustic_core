@@ -7,7 +7,7 @@ SnapshotFile(
   program_version: "rustic [rustic_core_version]",
   tree: "[tree_id]",
   paths: StringList([
-    "test",
+    "/",
   ]),
   hostname: "[hostname]",
   username: "",
@@ -38,7 +38,6 @@ SnapshotFile(
     backup_end: "[backup_end]",
     backup_duration: "[backup_duration]",
     total_duration: "[total_duration]",
-    error_count: 0,
   )),
   id: "[id]",
 )

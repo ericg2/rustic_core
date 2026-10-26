@@ -7,7 +7,7 @@ use std::{
 use derive_setters::Setters;
 
 use crate::backend::filters::GitignoreLayers;
-use crate::{backend::filters::ExcludeFilter, Excludes, File, FilterOptions, ListOptions, Node, NodeType, ReadSource, WriteSource};
+use crate::{backend::filters::ExcludeFilter, Excludes, File, FilterOptions, ListOptions, Node, NodeType, ReadSource, SaveOptions};
 
 /// Walks deeper than this are treated as a symlink loop or pathological
 /// input and aborted with an error, rather than running forever.
@@ -107,6 +107,9 @@ pub struct ListBuilder<'a, R: ReadSource> {
     /// or given an empty list.
     #[setters(strip_option)]
     excludes: Option<Excludes>,
+    /// How metadata of listed entries is stored. Defaults to
+    /// [`SaveOptions::default`].
+    save_opts: SaveOptions,
 }
 
 impl<'a, R: ReadSource> ListBuilder<'a, R> {
@@ -127,6 +130,7 @@ impl<'a, R: ReadSource> ListBuilder<'a, R> {
             recursive: true,
             filters: None,
             excludes: None,
+            save_opts: SaveOptions::default(),
         }
     }
 
@@ -177,6 +181,7 @@ impl<'a, R: ReadSource> ListBuilder<'a, R> {
         self.recursive = !opts.no_recursive;
         self.filters = opts.filters;
         self.excludes = opts.excludes;
+        self.save_opts = opts.save_opts;
         self
     }
 
@@ -241,6 +246,7 @@ impl<'a, R: ReadSource> ListBuilder<'a, R> {
             be: self.be,
             roots,
             filter_opts,
+            save_opts: self.save_opts,
             excludes,
             gitignore,
             dirs,
@@ -278,6 +284,7 @@ pub struct ListAdapter<'a, R: ReadSource> {
     roots: Vec<PathBuf>,
     recursive: bool,
     filter_opts: FilterOptions,
+    save_opts: SaveOptions,
     excludes: Option<ExcludeFilter>,
     gitignore: GitignoreLayers<'a, R>,
 
@@ -419,6 +426,7 @@ impl<'a, R: ReadSource> ListAdapter<'a, R> {
                 continue;
             }
 
+            let node = node.into_restore(self.save_opts);
             out.push(File::new(child_path, node.node_type, node.meta)?);
         }
 

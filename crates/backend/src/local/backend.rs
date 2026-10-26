@@ -9,7 +9,7 @@ use std::{
 
 use crate::local::{config::LocalConfig, mapper};
 use rustic_core::{
-    BytesList, ErrorKind, Node,
+    BytesList, ErrorKind, Node, NodeType,
     ReadHandle, ReadSource, RusticError, RusticResult, WriteBackend, WriteSource,
 };
 
@@ -52,9 +52,16 @@ impl ReadSource for LocalSource {
         let path = self.fix_path(path);
         let entries = fs::read_dir(path)?.map(|entry| {
             let entry = entry?;
-            let metadata = entry.metadata()?;
-            let converted_meta = mapper::convert_meta(&entry.path(), &metadata);
-            let file_type = mapper::parse_file_type(&metadata);
+            let entry_path = entry.path();
+            // Use `symlink_metadata` so a symlink is reported as a symlink
+            // rather than as its target.
+            let metadata = fs::symlink_metadata(&entry_path)?;
+            let converted_meta = mapper::convert_meta(&entry_path, &metadata);
+            let file_type = if metadata.file_type().is_symlink() {
+                NodeType::from_link(&fs::read_link(&entry_path)?)
+            } else {
+                mapper::parse_file_type(&metadata)
+            };
             Ok(Node::new_node(
                 &entry.file_name(),
                 file_type,

@@ -10,8 +10,8 @@ use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_backend::stdout::CommandSource;
 use rustic_core::{
-    BackupOptions, CancelToken, CommandInput, FilterOptions, Grouped, LsOptions, Metadata, Node,
-    NodeType, ParentOptions, PathList, RusticResult, SnapshotGroupCriterion, SnapshotOptions,
+    BackupOptions, CommandInput, FilterOptions, Grouped, ListOptions, LsOptions, Metadata, Node,
+    NodeType, ParentOptions, RusticResult, SnapshotGroupCriterion, SnapshotOptions,
     StringList,
     repofile::{PackId, SnapshotFile},
 };
@@ -75,6 +75,7 @@ fn test_backup_with_tar_gz_passes(
     // second backup
     let second_snapshot = repo
         .backup(SnapshotFile::default())
+        .options(opts.clone())
         .add_source(&src)
         .run()?;
 
@@ -98,7 +99,7 @@ fn test_backup_with_tar_gz_passes(
     let opts =
         opts.parent_opts(ParentOptions::default().parents(vec![second_snapshot.id.to_string()]));
     let third_snapshot = repo
-        .backup(SnapshotFile::default())
+        .backup(snap)
         .options(opts)
         .add_source(&src)
         .run()?;
@@ -305,15 +306,23 @@ fn test_backup_excludes_xattr_entries(set_up_repo: Result<RepoOpen>) -> Result<(
     xattr::set(&exclude_dir, "user.rustic_test_exclude", b"")?;
 
     let repo = set_up_repo?.to_indexed_ids()?;
-    let paths = PathList::from_iter(Some(base.to_path_buf()));
+    let src = LocalSource::new(base);
 
     let filter_opts =
         FilterOptions::default().exclude_if_xattr(vec!["user.rustic_test_exclude".to_string()]);
 
-    let opts = BackupOptions::default().as_path(PathBuf::from("test"));
+    let opts = BackupOptions::default()
+        .as_path(PathBuf::from("test"))
+        .source_opts(ListOptions {
+            filters: Some(filter_opts),
+            ..Default::default()
+        });
 
-    let src = LocalSource::new(paths).filter_opts(filter_opts);
-    let snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let snapshot = repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     let repo = repo.to_indexed_ids()?;
     let mut root_node = Node::new_node(OsStr::new(""), NodeType::Dir, Metadata::default());

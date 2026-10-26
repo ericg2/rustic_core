@@ -16,7 +16,8 @@ mod test {
     use tempfile::TempDir;
 
     use crate::local::LocalSource;
-    use rustic_core::{Excludes, FilterOptions, ListAdapter, ListOptions, ReadSource, WriteSource};
+    use rustic_core::{Excludes, FilterOptions, ListBuilder, ListOptions, ReadSource, WriteSource};
+    #[cfg(feature = "opendal")]
     use crate::opendal::{OpenDALConfig, OpenDALSource};
 
     /// Constructs a backend rooted at `fs_root` (an absolute filesystem
@@ -33,6 +34,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "opendal")]
     impl TestBackend for OpenDALSource {
         fn open(fs_root: &Path) -> Self {
             let mut opts = HashMap::new();
@@ -44,15 +46,21 @@ mod test {
     }
 
     /// Swap this alias to point at a different `TestBackend` impl to run
-    /// the suite against another backend.
-    type Backend = OpenDALSource;
+    /// the suite against another backend. The OpenDAL implementation above
+    /// is compiled behind the `opendal` feature, so the always-available
+    /// local backend is the default target.
+    type Backend = LocalSource;
 
     /// Collects every yielded path (root-relative, leading `/`, as
-    /// `ListAdapter` yields them against a backend rooted at `fs_root`),
+    /// `ListBuilder` yields them against a backend rooted at `fs_root`),
     /// panicking on any error so test failures show the actual io::Error
     /// instead of a downstream assertion mismatch.
     fn walk(be: &Backend, list_root: &str, opts: ListOptions) -> Vec<PathBuf> {
-        let adapter = ListAdapter::with_options(be, list_root, opts).expect("construct ListAdapter");
+        let adapter = ListBuilder::new(be)
+            .with_root(list_root)
+            .with_options(opts)
+            .build()
+            .expect("construct ListAdapter");
 
         adapter
             .map(|res| res.expect("walk should not error"))
@@ -207,7 +215,9 @@ mod test {
         // Roots must be paths relative to the backend's own root ("/"),
         // not absolute filesystem paths — the backend was already rooted
         // at `fs_root` via `Backend::open`.
-        let adapter = ListAdapter::new_multi(&be, ["/root_a", "/root_b"])
+        let adapter = ListBuilder::new(&be)
+            .with_roots(["/root_a", "/root_b"])
+            .build()
             .expect("construct multi-root adapter");
 
         let got: Vec<PathBuf> = adapter
@@ -230,8 +240,10 @@ mod test {
         let be = Backend::open(fs_root);
         // "/sub" is nested under "/"; passing both as roots should not
         // cause "/sub"'s contents to be yielded twice.
-        let adapter =
-            ListAdapter::new_multi(&be, ["/", "/sub"]).expect("construct overlapping-root adapter");
+        let adapter = ListBuilder::new(&be)
+            .with_roots(["/", "/sub"])
+            .build()
+            .expect("construct overlapping-root adapter");
 
         let got: Vec<PathBuf> = adapter
             .map(|res| res.expect("walk should not error"))
@@ -351,8 +363,11 @@ mod test {
         symlink(fs_root.join("real"), fs_root.join("real/loop")).unwrap();
 
         let be = Backend::open(fs_root);
-        let adapter =
-            ListAdapter::with_options(&be, "/", ListOptions::default()).expect("construct adapter");
+        let adapter = ListBuilder::new(&be)
+            .with_root("/")
+            .with_options(ListOptions::default())
+            .build()
+            .expect("construct adapter");
 
         // Just assert it terminates without hitting MAX_DEPTH or hanging.
         // Whether symlinked dirs are followed at all is backend-dependent;
@@ -379,7 +394,10 @@ mod test {
             ..Default::default()
         };
 
-        let err = ListAdapter::with_options(&be, "/does-not-exist", opts)
+        let err = ListBuilder::new(&be)
+            .with_root("/does-not-exist")
+            .with_options(opts)
+            .build()
             .err()
             .expect("constructing over a missing root should fail");
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);

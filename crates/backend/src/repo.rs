@@ -221,7 +221,11 @@ impl<S: WriteSource + 'static> ReadBackend for RepoAdapter<S> {
     }
 
     fn warmup_path(&self, tpe: FileType, id: &Id) -> String {
-        repo_path(tpe, id).to_string_lossy().into_owned()
+        let path = repo_path(tpe, id).to_string_lossy().into_owned();
+        match self.be.warmup_prefix() {
+            Some(prefix) if !prefix.is_empty() => format!("{prefix}/{path}"),
+            _ => path,
+        }
     }
 }
 

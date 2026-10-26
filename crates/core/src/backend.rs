@@ -22,7 +22,7 @@ use mockall::mock;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 use crate::{
-    Excludes, FilterOptions, RestoreOptions,
+    Excludes, FilterOptions, RestoreOptions, SaveOptions,
     backend::node::{Metadata, Node, NodeType},
     error::RusticResult,
     id::Id,
@@ -265,6 +265,11 @@ pub struct ListOptions {
     #[cfg_attr(feature = "clap", clap(long))]
     #[cfg_attr(feature = "merge", merge(strategy = conflate::bool::overwrite_false))]
     pub no_recursive: bool,
+
+    /// How metadata of listed entries is stored in the repository.
+    #[cfg_attr(feature = "clap", clap(flatten, next_help_heading = "Save options"))]
+    #[serde(flatten)]
+    pub save_opts: SaveOptions,
 }
 
 /// A configuration that can be built into a [`ReadSource`].
@@ -344,6 +349,18 @@ pub trait ReadSource: Send + Sync {
     /// reason other than the path not existing.
     fn exists(&self, path: &Path) -> io::Result<bool> {
         self.stat(path).map(|x| x.is_some())
+    }
+
+    /// Returns the backend-specific root prefix that has to be prepended to
+    /// repository-relative paths when handing them to external warm-up
+    /// commands, if the backend stores the repository below a configurable
+    /// root.
+    ///
+    /// Backends that address files directly by their repository-relative
+    /// path return [`None`]. The returned prefix must not have leading or
+    /// trailing path separators.
+    fn warmup_prefix(&self) -> Option<String> {
+        None
     }
 }
 

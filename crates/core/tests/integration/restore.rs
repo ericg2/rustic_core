@@ -1,23 +1,21 @@
 #[cfg(not(windows))]
 use std::os::unix::fs::MetadataExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::fs;
 
 use anyhow::Result;
-use rustic_backend::local::{LocalSource};
-use rustic_backend::{BackendBuilder, BackendOptions};
+use rustic_backend::local::LocalSource;
 use rustic_core::{
-    BackupOptions, CancelToken, ConfigOptions, Credentials, KeyOptions, LsOptions, Repository,
-    RepositoryBackends, RepositoryOptions, RestoreOptions, SnapshotOptions, repofile::SnapshotFile,
+    BackupOptions, CancelToken, LsOptions, Repository, RestoreOptions, SnapshotOptions,
+    repofile::SnapshotFile,
 };
 
 use rstest::rstest;
 use tempfile::tempdir;
 
 use super::{
-    RepoOpen, TestSource, assert_with_win, insta_node_redaction, insta_snapshotfile_redaction,
-    set_up_repo, tar_gz_testdata,
+    RepoOpen, TestSource, set_up_repo, tar_gz_testdata,
 };
 
 
@@ -31,7 +29,11 @@ fn test_restore_preserves_hardlinks(
 
     let opts = BackupOptions::default().as_path(PathBuf::from_str("test")?);
     let src = LocalSource::new(source.path());
-    let _snapshot = repo.backup(&opts, &src, SnapshotFile::default(), CancelToken::new())?;
+    let _snapshot = repo
+        .backup(SnapshotFile::default())
+        .options(opts)
+        .add_source(&src)
+        .run()?;
 
     let repo = repo.to_indexed()?;
     let node = repo.node_from_snapshot_path("latest", |_| true)?;
@@ -39,9 +41,16 @@ fn test_restore_preserves_hardlinks(
     let ls = repo.ls(&node, &ls_opts)?;
 
     let restore_dir = tempdir()?;
-    let dest = LocalDestination::new(restore_dir.path());
+    let dest = LocalSource::new(restore_dir.path());
     let restore_opts = RestoreOptions::default();
-    let plan = repo.prepare_restore(&restore_opts, ls.clone(), &dest, false, CancelToken::new())?;
+    let plan = repo.prepare_restore(
+        &restore_opts,
+        ls.clone(),
+        &dest,
+        Path::new("/"),
+        false,
+        CancelToken::new(),
+    )?;
     repo.restore(plan, &restore_opts, ls, &dest, CancelToken::new())?;
 
     let hardlink = restore_dir.path().join("test/0/tests/testfile-hardlink");

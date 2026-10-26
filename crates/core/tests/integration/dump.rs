@@ -1,4 +1,4 @@
-use std::{fs, io::Write, path::PathBuf, str::FromStr};
+use std::{fs, io::Write};
 
 use anyhow::Result;
 use bytesize::ByteSize;
@@ -6,7 +6,7 @@ use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_core::{
-    BackupOptions, CancelToken, ConfigOptions, IndexedFullStatus, PathList, Repository,
+    ConfigOptions, IndexedFullStatus, Repository,
     repofile::{Chunker, SnapshotFile},
 };
 use tempfile::tempdir;
@@ -39,12 +39,13 @@ fn backup_single_file(
         .set_chunker(Chunker::FixedSize)
         .set_chunk_size(ByteSize(4096));
     assert!(repo.apply_config(&config)?);
-    
-    let src = LocalSource::new(&file_path);
-    let opts = BackupOptions::default().as_path(PathBuf::from_str(name)?);
-    let _snapshot =  repo
+
+    // `add_source` walks the source from its virtual root; a source rooted at
+    // a regular file would have nothing to list. Point it at the containing
+    // directory instead and look the file up by name in the resulting tree.
+    let src = LocalSource::new(dir.path());
+    let _snapshot = repo
         .backup(SnapshotFile::default())
-        .options(opts)
         .add_source(&src)
         .run()?;
 

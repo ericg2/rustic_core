@@ -119,6 +119,29 @@ fn test_rewrite(
         .add_source(&src)
         .run()?;
     // trees should be identical
+    {
+        let mut node2 = Node::new_node(
+            OsStr::new(""),
+            rustic_core::repofile::NodeType::Dir,
+            Metadata::default(),
+        );
+        node2.subtree = Some(snapshot.tree);
+        let entries2: BTreeMap<_, _> = repo
+            .ls(&node2, &LsOptions::default())?
+            .collect::<RusticResult<_>>()?;
+        for (path, n) in &entries {
+            match entries2.get(path) {
+                Some(n2) if n == n2 => {}
+                Some(n2) => eprintln!("DIFF {path:?}\n rewrite={n:?}\n backup ={n2:?}"),
+                None => eprintln!("ONLY REWRITE {path:?} {n:?}"),
+            }
+        }
+        for path in entries2.keys() {
+            if !entries.contains_key(path) {
+                eprintln!("ONLY BACKUP {path:?}");
+            }
+        }
+    }
     assert_eq!(snapshot.tree, rewrite_snaps[0].tree);
 
     Ok(())

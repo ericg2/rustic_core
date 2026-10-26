@@ -321,6 +321,15 @@ impl ReadSource for OpenDALSource {
             Err(err) => return Err(err.into()),
         }
     }
+
+    fn warmup_prefix(&self) -> Option<String> {
+        // OpenDAL normalizes roots to `/path/to/repo/` (with leading and
+        // trailing slashes), or just `/` for the storage root. Strip the
+        // separators so that warm-up commands receive the full object key,
+        // e.g. `path/to/repo/data/03/03dc...`.
+        let root = self.op.info().root().trim_matches('/').to_string();
+        (!root.is_empty()).then_some(root)
+    }
 }
 
 impl WriteSource for OpenDALSource {

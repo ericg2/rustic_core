@@ -19,7 +19,7 @@ use log::info;
 use serde_with::{DisplayFromStr, serde_as};
 
 use crate::{
-    CancelToken, ReadSource, RepositoryBackends, RusticError, WriteSource,
+    CancelToken, RepositoryBackends, RusticError, WriteSource,
     backend::{
         FileType, FindInBackend, ReadBackend, WriteBackend,
         cache::{Cache, CachedBackend},
@@ -37,7 +37,6 @@ use crate::{
     },
     commands::{
         self,
-        backup::BackupOptions,
         check::{CheckOptions, CheckResults, check_repository},
         config::{ConfigOptions, save_config_hot},
         copy::CopySnapshot,
@@ -60,7 +59,7 @@ use crate::{
     },
     progress::{HiddenProgress, NoProgressBars, Progress, ProgressBars, ProgressType},
     repofile::{
-        ConfigFile, KeyId, PathList, RepoFile, RepoId, SnapshotFile, SnapshotSummary, Tree,
+        ConfigFile, KeyId, RepoFile, RepoId, SnapshotFile, SnapshotSummary, Tree,
         configfile::ConfigId,
         keyfile::{MasterKey, find_key_in_backend},
         snapshotfile::SnapshotId,

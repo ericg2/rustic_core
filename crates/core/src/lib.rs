@@ -25,8 +25,9 @@ implement [`serde::Serialize`] and [`serde::Deserialize`].
 
 ```rust
     use rustic_backend::BackendOptions;
-    use rustic_core::{repofile::MasterKey, BackupOptions, ConfigOptions, Credentials,
-        KeyOptions, PathList, Repository, RepositoryOptions, SnapshotOptions,
+    use rustic_backend::local::LocalSource;
+    use rustic_core::{ConfigOptions, Credentials,
+        KeyOptions, Repository, RepositoryOptions, SnapshotOptions, repofile::MasterKey,
     };
 
     // Initialize the repository in a temporary dir
@@ -64,15 +65,16 @@ implement [`serde::Serialize`] and [`serde::Deserialize`].
 
     // Pre-define the snapshot-to-backup
     let snap = SnapshotOptions::default()
-        .add_tags("tag1,tag2").unwrap()
+        .add_tags("tag1,tag2")
+        .unwrap()
         .to_snapshot().unwrap();
 
-    // Specify backup options and source
-    let backup_opts = BackupOptions::default();
-    let source = PathList::from_string("src").unwrap().sanitize().unwrap();
+    // Specify the source to back up. `src` is relative to the current
+    // working directory, which is the crate root when doctests run.
+    let source = LocalSource::new("src");
 
     // run the backup and return the snapshot pointing to the backup'ed data.
-    let snap = repo.backup(&backup_opts, &source, snap).unwrap();
+    let snap = repo.backup(snap).add_source(&source).run().unwrap();
     // assert_eq!(&snap.paths, ["src"]);
 
     // Get all snapshots from the repository

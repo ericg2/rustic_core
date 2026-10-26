@@ -15,7 +15,9 @@ expression: snap
     "user": "[user]",
     "group": "[group]",
     "inode": "[inode]",
+    "device_id": "[device_id]",
     "links": 1,
+    "extended_attributes": "[some]",
     "content": Some([]),
   },
   {
@@ -33,6 +35,7 @@ expression: snap
     "device_id": "[device_id]",
     "size": 21,
     "links": 2,
+    "extended_attributes": "[some]",
     "content": Some([
       Id("649b8b471e7d7bc175eec758a7006ac693c434c8297c07db15286788c837154a"),
     ]),
@@ -52,6 +55,7 @@ expression: snap
     "device_id": "[device_id]",
     "size": 21,
     "links": 2,
+    "extended_attributes": "[some]",
     "content": Some([
       Id("649b8b471e7d7bc175eec758a7006ac693c434c8297c07db15286788c837154a"),
     ]),
@@ -69,8 +73,10 @@ expression: snap
     "user": "[user]",
     "group": "[group]",
     "inode": "[inode]",
+    "device_id": "[device_id]",
     "size": 8,
     "links": 1,
+    "extended_attributes": "[some]",
     "content": None,
   },
 ]

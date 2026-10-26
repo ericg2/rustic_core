@@ -60,7 +60,7 @@ impl DevIdOption {
 
 /// Options how block devices should be treated
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BlockdevOption {
     /// As special file, i.e. don't read the data

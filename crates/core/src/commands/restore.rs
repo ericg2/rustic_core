@@ -5,7 +5,7 @@ use log::{debug, error, info, trace, warn};
 use smallvec::SmallVec;
 
 use crate::{
-    CancelToken, File, FileLister, ListAdapter, ListBuilder, ReadSource, WriteHandle, WriteSource,
+    CancelToken, File, ListAdapter, ListBuilder, WriteHandle, WriteSource,
     backend::{
         FileType, ReadBackend,
         decrypt::DecryptReadBackend,
@@ -191,15 +191,6 @@ where
 {
     token.check()?;
 
-    let p = repo.progress_spinner("collecting file information...");
-    dest.create_dir_all(Path::new(dest_path)).map_err(|err| {
-        RusticError::with_source(ErrorKind::Backend, "Failed to initialize restore.", err)
-    })?; // *** create the root directory here.
-
-    let mut stats = RestoreStats::default();
-    let mut restore_infos = RestorePlan::default();
-    let mut additional_existing = false;
-    let skip_dirs = DashSet::<PathBuf>::new();
     let clean_path = |path: &Path| -> PathBuf {
         Path::new(
             path.to_string_lossy()
@@ -209,6 +200,23 @@ where
         )
         .to_path_buf()
     };
+
+    // `dest_path` is relative to `dest`, so normalize it the same way as
+    // every other path we compare against. In particular, passing `/` (the
+    // natural way to say "the destination root") must behave exactly like
+    // passing an empty path; otherwise hardlink candidates and node paths
+    // disagree on whether they carry a leading separator.
+    let dest_path = clean_path(dest_path);
+
+    let p = repo.progress_spinner("collecting file information...");
+    dest.create_dir_all(&dest_path).map_err(|err| {
+        RusticError::with_source(ErrorKind::Backend, "Failed to initialize restore.", err)
+    })?; // *** create the root directory here.
+
+    let mut stats = RestoreStats::default();
+    let mut restore_infos = RestorePlan::default();
+    let mut additional_existing = false;
+    let skip_dirs = DashSet::<PathBuf>::new();
 
     // Pulls the next entry out of `src`, skipping anything under a
     // directory we've already decided to skip (an "additional" dir we're
@@ -356,7 +364,7 @@ where
     };
 
     let mut src = ListBuilder::new(dest)
-        .with_root(dest_path)
+        .with_root(&dest_path)
         .build()
         .map_err(|err| {
             RusticError::with_source(
@@ -380,7 +388,7 @@ where
                 next_dst = process_existing(&mut src, destination)?;
             }
             (Some(destination), Some((path, node))) => {
-                let path = crate::join_force(dest_path, path);
+                let path = crate::join_force(&dest_path, path);
                 let path_a = clean_path(&destination.path);
                 let path_b = clean_path(&path);
                 trace!("comparing {:?} with {:?}", &path_a, &path_b);
@@ -409,7 +417,7 @@ where
                 }
             }
             (None, Some((path, node))) => {
-                let path = crate::join_force(dest_path, path);
+                let path = crate::join_force(&dest_path, path);
                 process_node(&path, node, false)?;
                 next_node = node_streamer.next().transpose()?;
             }
