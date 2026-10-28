@@ -8,6 +8,8 @@ use std::sync::{
 ///
 /// # Example
 /// ```rust
+/// use rustic_core::CancelToken;
+///
 /// let token = CancelToken::new();
 /// let worker_token = token.clone();
 ///

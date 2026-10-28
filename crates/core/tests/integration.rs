@@ -60,7 +60,7 @@ use tempfile::{TempDir, tempdir};
 
 use rustic_core::{
     CommandInput, ConfigOptions, CredentialOptions, Credentials, IndexedFull, IndexedFullStatus,
-    KeyOptions, OpenStatus, PathList, Repository, RepositoryBackends, BackendConfig,
+    KeyOptions, OpenStatus, Repository, RepositoryBackends, BackendConfig,
     RepositoryOptions, repofile::MasterKey,
 };
 use rustic_testing::backend::in_memory_backend::InMemoryBackend;
@@ -77,10 +77,6 @@ impl TestSource {
 
     fn path(&self) -> &Path {
         self.0.path()
-    }
-
-    fn path_list(&self) -> PathList {
-        PathList::from_iter(Some(self.0.path().to_path_buf()))
     }
 }
 

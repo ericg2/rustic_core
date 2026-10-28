@@ -4,7 +4,7 @@ use anyhow::Result;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_core::{
-    BackupOptions, CancelToken, ConfigOptions, PruneOptions, repofile::SnapshotFile,
+    BackupOptions, ConfigOptions, PruneOptions, repofile::SnapshotFile,
 };
 
 use super::{RepoOpen, TestSource, set_up_repo, tar_gz_testdata};

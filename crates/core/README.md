@@ -66,8 +66,8 @@ This crate exposes a few features for controlling dependency usage:
 ### Example: Initializing a new repository
 
 ```rust
-use rustic_backend::BackendOptions;
-use rustic_core::{ConfigOptions, KeyOptions, Repository, RepositoryOptions};
+use rustic_backend::{BackendBuilder, BackendOptions};
+use rustic_core::{ConfigOptions, Credentials, KeyOptions, Repository, RepositoryOptions};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
 
@@ -81,10 +81,11 @@ fn main() -> Result<(), Box<dyn Error>> {
         .to_backends()?;
 
     // Init repository
-    let repo_opts = RepositoryOptions::default().password("test");
+    let repo_opts = RepositoryOptions::default();
     let key_opts = KeyOptions::default();
     let config_opts = ConfigOptions::default();
-    let _repo = Repository::new(&repo_opts, backends)?.init(&key_opts, &config_opts)?;
+    let _repo = Repository::new(&repo_opts, &backends)?
+        .init(&Credentials::password("test"), &key_opts, &config_opts)?;
 
     // -> use _repo for any operation on an open repository
     Ok(())
@@ -94,8 +95,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 ### Example: Creating a new snapshot
 
 ```rust
-use rustic_backend::BackendOptions;
-use rustic_core::{BackupOptions, PathList, Repository, RepositoryOptions, SnapshotOptions};
+use rustic_backend::{BackendBuilder, BackendOptions, local::LocalSource};
+use rustic_core::{
+    BackupOptions, Credentials, Repository, RepositoryOptions, SnapshotOptions,
+};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
 
@@ -110,32 +113,40 @@ fn main() -> Result<(), Box<dyn Error>> {
         .to_backends()?;
 
     // Open repository
-    let repo_opts = RepositoryOptions::default().password("test");
-
-    let repo = Repository::new(&repo_opts, backends)?
-        .open()?
+    let repo_opts = RepositoryOptions::default();
+    let repo = Repository::new(&repo_opts, &backends)?
+        .open(&Credentials::password("test"))?
         .to_indexed_ids()?;
 
-    let backup_opts = BackupOptions::default();
-    let source = PathList::from_string(".")?.sanitize()?;
+    // The source can be any `ReadSource`; `LocalSource` reads from the
+    // local filesystem.
+    let source = LocalSource::new(".");
     let snap = SnapshotOptions::default()
         .add_tags("tag1,tag2")?
         .to_snapshot()?;
 
     // Create snapshot
-    let snap = repo.backup(&backup_opts, &source, snap)?;
+    let snap = repo
+        .backup(snap)
+        .options(BackupOptions::default())
+        .add_source(&source)
+        .run()?;
 
     println!("successfully created snapshot:\n{snap:#?}");
     Ok(())
+}
 ```
 
 ### Example: Restoring a snapshot
 
 ```rust
-use rustic_backend::BackendOptions;
-use rustic_core::{LocalDestination, LsOptions, Repository, RepositoryOptions, RestoreOptions};
+use rustic_backend::{BackendBuilder, BackendOptions, local::LocalSource};
+use rustic_core::{
+    CancelToken, Credentials, LsOptions, Repository, RepositoryOptions, RestoreOptions,
+};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
+use std::path::Path;
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Display info logs
@@ -147,9 +158,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .to_backends()?;
 
     // Open repository
-    let repo_opts = RepositoryOptions::default().password("test");
-    let repo = Repository::new(&repo_opts, backends)?
-        .open()?
+    let repo_opts = RepositoryOptions::default();
+    let repo = Repository::new(&repo_opts, &backends)?
+        .open(&Credentials::password("test"))?
         .to_indexed()?;
 
     // use latest snapshot without filtering snapshots
@@ -160,15 +171,22 @@ fn main() -> Result<(), Box<dyn Error>> {
     let ls = repo.ls(&node, &streamer_opts)?;
 
     let destination = "./restore/"; // restore to this destination dir
-    let create = true; // create destination dir, if it doesn't exist
-    let dest = LocalDestination::new(destination, create, !node.is_dir())?;
+    std::fs::create_dir_all(destination)?;
+    let dest = LocalSource::new(destination);
 
     let opts = RestoreOptions::default();
     let dry_run = false;
     // create restore infos. Note: this also already creates needed dirs in the destination
-    let restore_infos = repo.prepare_restore(&opts, ls.clone(), &dest, dry_run)?;
+    let restore_infos = repo.prepare_restore(
+        &opts,
+        ls.clone(),
+        &dest,
+        Path::new("/"),
+        dry_run,
+        CancelToken::new(),
+    )?;
 
-    repo.restore(restore_infos, &opts, ls, &dest)?;
+    repo.restore(restore_infos, &opts, ls, &dest, CancelToken::new())?;
     Ok(())
 }
 ```
@@ -176,8 +194,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 ### Example: Checking a repository
 
 ```rust
-use rustic_backend::BackendOptions;
-use rustic_core::{CheckOptions, Repository, RepositoryOptions};
+use rustic_backend::{BackendBuilder, BackendOptions};
+use rustic_core::{CheckOptions, Credentials, Repository, RepositoryOptions};
 use simplelog::{Config, LevelFilter, SimpleLogger};
 use std::error::Error;
 
@@ -191,8 +209,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         .to_backends()?;
 
     // Open repository
-    let repo_opts = RepositoryOptions::default().password("test");
-    let repo = Repository::new(&repo_opts, backends)?.open()?;
+    let repo_opts = RepositoryOptions::default();
+    let repo = Repository::new(&repo_opts, &backends)?
+        .open(&Credentials::password("test"))?;
 
     // Check repository with standard options but omitting cache checks
     let opts = CheckOptions::default().trust_cache(true);

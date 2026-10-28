@@ -30,7 +30,7 @@ mod test {
 
     impl TestBackend for LocalSource {
         fn open(fs_root: &Path) -> Self {
-            LocalSource::new(fs_root)
+            Self::new(fs_root)
         }
     }
 
@@ -38,24 +38,24 @@ mod test {
     impl TestBackend for OpenDALSource {
         fn open(fs_root: &Path) -> Self {
             let mut opts = HashMap::new();
-            opts.insert("root".to_string(), fs_root.to_str().unwrap().to_string());
+            let _ = opts.insert("root".to_string(), fs_root.to_str().unwrap().to_string());
 
             let cfg = OpenDALConfig::default().options(opts).scheme("fs".to_string());
-            OpenDALSource::from_config(&cfg).unwrap()
+            Self::from_config(&cfg).unwrap()
         }
     }
 
     /// Swap this alias to point at a different `TestBackend` impl to run
-    /// the suite against another backend. The OpenDAL implementation above
+    /// the suite against another backend. The `OpenDAL` implementation above
     /// is compiled behind the `opendal` feature, so the always-available
     /// local backend is the default target.
     type Backend = LocalSource;
 
     /// Collects every yielded path (root-relative, leading `/`, as
     /// `ListBuilder` yields them against a backend rooted at `fs_root`),
-    /// panicking on any error so test failures show the actual io::Error
+    /// panicking on any error so test failures show the actual `io::Error`
     /// instead of a downstream assertion mismatch.
-    fn walk(be: &Backend, list_root: &str, opts: ListOptions) -> Vec<PathBuf> {
+    fn walk<R: ReadSource>(be: &R, list_root: &str, opts: ListOptions) -> Vec<PathBuf> {
         let adapter = ListBuilder::new(be)
             .with_root(list_root)
             .with_options(opts)
@@ -70,8 +70,24 @@ mod test {
 
     /// Convenience wrapper for the common case: backend rooted at `/`
     /// (i.e. the whole temp dir), walked from `/`.
-    fn walk_all(be: &Backend, opts: ListOptions) -> Vec<PathBuf> {
+    fn walk_all<R: ReadSource>(be: &R, opts: ListOptions) -> Vec<PathBuf> {
         walk(be, "/", opts)
+    }
+
+    fn read_all<R: ReadSource>(be: &R, path: &str) -> Vec<u8> {
+        use std::io::Read;
+
+        let mut handle = be
+            .open_read(Path::new(path))
+            .unwrap_or_else(|err| panic!("open {path} failed: {err}"));
+        let mut buf = Vec::new();
+        let _ = handle
+            .read_to_end(&mut buf)
+            .unwrap_or_else(|err| panic!("read {path} failed: {err}"));
+        handle
+            .close()
+            .unwrap_or_else(|err| panic!("close {path} failed: {err}"));
+        buf
     }
 
     fn touch(fs_root: &Path, rel: &str, contents: &[u8]) {
@@ -148,7 +164,7 @@ mod test {
         let be = Backend::open(fs_root);
         let got = walk_all(&be, ListOptions::default());
 
-        assert!(got.is_empty());
+        assert_eq!(got, Vec::<PathBuf>::new());
     }
 
     // ── The self-entry / abcd-in-abcd regression ────────────────────────────
@@ -476,5 +492,263 @@ mod test {
         for p in &got {
             assert!(p.starts_with("/a/b/c"), "lost prefix at: {}", p.display());
         }
+    }
+
+    // ── LocalSource read/write operations ──────────────────────────────────
+
+    #[test]
+    fn local_source_stat_reports_metadata_and_missing_paths() {
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+
+        touch(fs_root, "/dir/file.txt", b"hello");
+        let be = LocalSource::new(fs_root);
+
+        let meta = be
+            .stat(Path::new("/dir/file.txt"))
+            .expect("stat should succeed")
+            .expect("file should exist");
+        assert_eq!(meta.size, 5);
+        assert!(meta.mtime.is_some());
+
+        let dir_meta = be
+            .stat(Path::new("/dir"))
+            .expect("stat should succeed")
+            .expect("dir should exist");
+        assert_eq!(dir_meta.size, 0);
+
+        assert!(
+            be.stat(Path::new("/does-not-exist"))
+                .expect("stat should distinguish missing paths")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn local_source_open_read_is_relative_to_the_backend_root() {
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+
+        touch(fs_root, "/nested/file.txt", b"hello from the root");
+        let be = LocalSource::new(fs_root);
+
+        assert_eq!(read_all(&be, "/nested/file.txt"), b"hello from the root");
+
+        // A root-prefixed path must be resolved below the backend root, not
+        // treated as an absolute filesystem path.
+        assert!(be.open_read(Path::new("/nested/missing.txt")).is_err());
+    }
+
+    #[test]
+    fn local_source_write_all_creates_parents_and_truncates() {
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+        let be = LocalSource::new(fs_root);
+
+        be.write_all(
+            Path::new("/nested/dir/file.txt"),
+            b"first version".to_vec().into(),
+        )
+        .expect("write_all should create missing parents");
+        assert_eq!(
+            fs::read_to_string(fs_root.join("nested/dir/file.txt")).unwrap(),
+            "first version"
+        );
+        assert_eq!(read_all(&be, "/nested/dir/file.txt"), b"first version");
+
+        // Writing again must replace (not append to) the file.
+        be.write_all(Path::new("/nested/dir/file.txt"), b"second".to_vec().into())
+            .expect("write_all should replace existing files");
+        assert_eq!(read_all(&be, "/nested/dir/file.txt"), b"second");
+
+        // The atomic-write helper must not leave its temporary file behind.
+        let entries: Vec<_> = fs::read_dir(fs_root.join("nested/dir"))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("file.txt")]);
+    }
+
+    #[test]
+    fn local_source_write_at_and_set_length_modify_existing_content() {
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+        let be = LocalSource::new(fs_root);
+
+        be.write_all(Path::new("/file.bin"), b"0123456789".to_vec().into())
+            .unwrap();
+
+        be.write_at(Path::new("/file.bin"), 4, b"xy")
+            .expect("write_at should overwrite bytes at the given offset");
+        assert_eq!(read_all(&be, "/file.bin"), b"0123xy6789");
+
+        be.set_length(Path::new("/file.bin"), 4)
+            .expect("set_length should truncate the file");
+        assert_eq!(read_all(&be, "/file.bin"), b"0123");
+    }
+
+    #[test]
+    fn local_source_hard_link_creates_a_second_name_for_the_same_inode() {
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+        let be = LocalSource::new(fs_root);
+
+        be.write_all(Path::new("/original.txt"), b"linked".to_vec().into())
+            .unwrap();
+        be.hard_link(Path::new("/original.txt"), Path::new("/link.txt"))
+            .expect("hard_link should create the link");
+
+        assert_eq!(read_all(&be, "/link.txt"), b"linked");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let original = fs::metadata(fs_root.join("original.txt")).unwrap();
+            let link = fs::metadata(fs_root.join("link.txt")).unwrap();
+            assert_eq!(original.ino(), link.ino());
+            assert_eq!(link.nlink(), 2);
+        }
+    }
+
+    #[test]
+    fn local_source_remove_file_and_remove_dir_delete_below_the_root() {
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+        let be = LocalSource::new(fs_root);
+
+        be.write_all(Path::new("/file.txt"), b"x".to_vec().into())
+            .unwrap();
+        be.remove_file(Path::new("/file.txt")).unwrap();
+        assert!(!fs_root.join("file.txt").exists());
+
+        be.create_dir_all(Path::new("/a/b/c")).unwrap();
+        be.write_all(Path::new("/a/b/c/file.txt"), b"x".to_vec().into())
+            .unwrap();
+        be.remove_dir(Path::new("/a")).unwrap();
+        assert!(!fs_root.join("a").exists());
+
+        // Removing a missing file must surface an error rather than succeed
+        // silently.
+        assert!(be.remove_file(Path::new("/missing.txt")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_source_readdir_reports_symlinks_instead_of_following_them() {
+        use std::os::unix::fs::symlink;
+
+        use rustic_core::NodeType;
+
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+
+        touch(fs_root, "/target.txt", b"target content");
+        symlink("target.txt", fs_root.join("link.txt")).unwrap();
+
+        let be = LocalSource::new(fs_root);
+        let nodes: Vec<_> = be
+            .readdir(Path::new("/"))
+            .expect("readdir should succeed")
+            .collect::<std::io::Result<Vec<_>>>()
+            .unwrap();
+
+        let link = nodes
+            .iter()
+            .find(|node| node.name() == std::ffi::OsStr::new("link.txt"))
+            .expect("symlink should be listed");
+        assert!(matches!(link.node_type, NodeType::Symlink { .. }));
+        assert_eq!(link.node_type.to_link(), Path::new("target.txt"));
+
+        // `stat` uses symlink metadata as well, so the target is not followed.
+        let link_meta = be
+            .stat(Path::new("/link.txt"))
+            .unwrap()
+            .expect("symlink should exist");
+        assert_eq!(link_meta.size, "target.txt".len() as u64);
+    }
+
+    // ── OpenDAL fs backend ────────────────────────────────────────────────
+
+    #[cfg(feature = "opendal")]
+    #[test]
+    fn opendal_fs_source_lists_the_same_tree_as_local_source() {
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+
+        touch(fs_root, "/a.txt", b"1");
+        touch(fs_root, "/sub/b.txt", b"2");
+        touch(fs_root, "/sub/deeper/c.txt", b"3");
+
+        let local = LocalSource::new(fs_root);
+        let opendal = <OpenDALSource as TestBackend>::open(fs_root);
+
+        let local_paths = sorted(walk_all(&local, ListOptions::default()));
+        let opendal_paths = sorted(walk_all(&opendal, ListOptions::default()));
+
+        assert_eq!(opendal_paths, local_paths);
+    }
+
+    #[cfg(feature = "opendal")]
+    #[test]
+    fn opendal_fs_source_supports_write_read_stat_and_delete() {
+        let tmp = TempDir::new().unwrap();
+        let fs_root = tmp.path();
+        let be = <OpenDALSource as TestBackend>::open(fs_root);
+
+        be.create_dir_all(Path::new("/nested")).unwrap();
+        be.write_all(Path::new("/nested/file.txt"), b"opendal".to_vec().into())
+            .expect("OpenDAL write_all should succeed");
+        assert_eq!(read_all(&be, "/nested/file.txt"), b"opendal");
+
+        let meta = be
+            .stat(Path::new("/nested/file.txt"))
+            .expect("stat should succeed")
+            .expect("file should exist");
+        assert_eq!(meta.size, 7);
+        assert!(be.stat(Path::new("/nested/missing.txt")).unwrap().is_none());
+
+        be.remove_file(Path::new("/nested/file.txt")).unwrap();
+        assert!(!fs_root.join("nested/file.txt").exists());
+
+        be.create_dir_all(Path::new("/nested/deeper")).unwrap();
+        be.write_all(
+            Path::new("/nested/deeper/file.txt"),
+            b"opendal".to_vec().into(),
+        )
+        .unwrap();
+        be.remove_dir(Path::new("/nested")).unwrap();
+        assert!(!fs_root.join("nested").exists());
+    }
+
+    #[cfg(feature = "opendal")]
+    #[test]
+    fn opendal_fs_source_reports_unsupported_random_writes() {
+        let tmp = TempDir::new().unwrap();
+        let be = <OpenDALSource as TestBackend>::open(tmp.path());
+
+        be.write_all(Path::new("/file.txt"), b"data".to_vec().into())
+            .unwrap();
+
+        assert!(!be.can_random_write());
+        assert!(!be.can_hard_link());
+        assert_eq!(
+            be.write_at(Path::new("/file.txt"), 0, b"x")
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::Unsupported
+        );
+        assert_eq!(
+            be.hard_link(Path::new("/file.txt"), Path::new("/link.txt"))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::Unsupported
+        );
+
+        // Truncating to zero is supported; growing is not.
+        be.set_length(Path::new("/file.txt"), 0).unwrap();
+        assert_eq!(read_all(&be, "/file.txt"), b"");
+        assert_eq!(
+            be.set_length(Path::new("/file.txt"), 1).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
     }
 }

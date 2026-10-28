@@ -6,7 +6,7 @@ use insta::Settings;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_core::{
-    BackupOptions, CancelToken, LsOptions, RusticResult,
+    BackupOptions, LsOptions, RusticResult,
     repofile::{Metadata, Node, SnapshotFile},
 };
 

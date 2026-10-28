@@ -4,7 +4,7 @@ use jiff::Span;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_core::{
-    BackupOptions, CancelToken, CheckOptions, ConfigOptions, LimitOption, PathList, PruneOptions,
+    BackupOptions, CheckOptions, ConfigOptions, LimitOption, PruneOptions,
     repofile::{Chunker, SnapshotFile},
 };
 

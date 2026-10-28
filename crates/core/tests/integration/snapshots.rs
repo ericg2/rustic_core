@@ -13,7 +13,7 @@ use rstest::{fixture, rstest};
 use rustic_backend::local::LocalSource;
 use rustic_core::repofile::SnapshotFile;
 use rustic_core::{
-    BackupOptions, CancelToken, Grouped, IndexedIdsStatus, Repository, SnapshotGroupCriterion,
+    BackupOptions, Grouped, IndexedIdsStatus, Repository, SnapshotGroupCriterion,
 };
 
 #[fixture]

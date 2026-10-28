@@ -8,7 +8,7 @@ use globset::Glob;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_core::{
-    BackupOptions, CancelToken, FindMatches, FindNode,
+    BackupOptions, FindMatches, FindNode,
     repofile::{Node, SnapshotFile},
 };
 

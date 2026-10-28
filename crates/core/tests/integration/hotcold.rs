@@ -5,7 +5,7 @@ use pretty_assertions::assert_eq;
 use rstest::rstest;
 use rustic_backend::local::LocalSource;
 use rustic_core::{
-    BackupOptions, CancelToken, CheckOptions, ConfigOptions, Credentials, FileType, KeyOptions,
+    BackupOptions, CheckOptions, ConfigOptions, Credentials, FileType, KeyOptions,
     ReadBackend, Repository, RepositoryBackends, RepositoryOptions, WriteBackend,
     repofile::SnapshotFile,
 };

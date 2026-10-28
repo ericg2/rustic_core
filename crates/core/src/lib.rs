@@ -25,6 +25,7 @@ implement [`serde::Serialize`] and [`serde::Deserialize`].
 
 ```rust
     use rustic_backend::BackendOptions;
+    use rustic_backend::BackendBuilder;
     use rustic_backend::local::LocalSource;
     use rustic_core::{ConfigOptions, Credentials,
         KeyOptions, Repository, RepositoryOptions, SnapshotOptions, repofile::MasterKey,
